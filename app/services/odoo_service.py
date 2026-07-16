@@ -41,14 +41,16 @@ class AttendanceRecord:
 class OdooService:
     """Talks to Odoo over XML-RPC to create/close hr.attendance records.
 
-    Assumes the `employee_id` used by this service is the same id as the
-    corresponding `hr.employee` record in Odoo. Adjust `_resolve_odoo_employee_id`
-    if your deployment needs a mapping table instead.
+    `employee_id` here is the human-readable code stamped on badges / entered
+    at enrollment - it is matched against `hr.employee.barcode`, the standard
+    Odoo field used for badge/kiosk-style employee identification. The numeric
+    Odoo `hr.employee.id` is resolved from that barcode on demand and cached.
     """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._uid: int | None = None
+        self._barcode_to_id_cache: dict[str, int] = {}
         use_https = settings.odoo_url.startswith("https://")
         transport = _TimeoutTransport(settings.odoo_timeout, use_https=use_https)
         self._common = xmlrpc.client.ServerProxy(
@@ -76,7 +78,7 @@ class OdooService:
         self._uid = uid
         return uid
 
-    def _execute(self, model: str, method: str, *args: Any) -> Any:
+    def _execute(self, model: str, method: str, *args: Any, kwargs: dict[str, Any] | None = None) -> Any:
         uid = self._authenticate()
         try:
             return self._models.execute_kw(
@@ -86,18 +88,28 @@ class OdooService:
                 model,
                 method,
                 list(args),
+                kwargs or {},
             )
         except xmlrpc.client.Fault as exc:
             raise OdooServiceError(f"Odoo call {model}.{method} failed: {exc.faultString}") from exc
         except Exception as exc:
             raise OdooServiceError(f"Odoo call {model}.{method} failed: {exc}") from exc
 
-    def _resolve_odoo_employee_id(self, employee_id: int) -> int:
-        return employee_id
+    def _resolve_odoo_employee_id(self, barcode: str) -> int:
+        if barcode in self._barcode_to_id_cache:
+            return self._barcode_to_id_cache[barcode]
+
+        ids = self._execute("hr.employee", "search", [["barcode", "=", barcode]], kwargs={"limit": 1})
+        if not ids:
+            raise OdooServiceError(
+                f"No hr.employee found with barcode='{barcode}' - check the employee's Barcode field in Odoo"
+            )
+        self._barcode_to_id_cache[barcode] = ids[0]
+        return ids[0]
 
     def create_attendance(
         self,
-        employee_id: int,
+        employee_id: str,
         timestamp: datetime,
         latitude: float | None = None,
         longitude: float | None = None,

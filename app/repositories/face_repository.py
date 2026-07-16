@@ -10,7 +10,7 @@ class FaceRepository:
     def create(
         self,
         db: Session,
-        employee_id: int,
+        employee_id: str,
         embedding: list[float],
         image_path: str | None = None,
     ) -> EmployeeFace:
@@ -23,10 +23,10 @@ class FaceRepository:
     def get_all(self, db: Session) -> list[EmployeeFace]:
         return db.query(EmployeeFace).all()
 
-    def get_by_employee_id(self, db: Session, employee_id: int) -> list[EmployeeFace]:
+    def get_by_employee_id(self, db: Session, employee_id: str) -> list[EmployeeFace]:
         return db.query(EmployeeFace).filter(EmployeeFace.employee_id == employee_id).all()
 
-    def delete_by_employee_id(self, db: Session, employee_id: int) -> int:
+    def delete_by_employee_id(self, db: Session, employee_id: str) -> int:
         result = db.execute(delete(EmployeeFace).where(EmployeeFace.employee_id == employee_id))
         db.commit()
         return result.rowcount

@@ -4,7 +4,8 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url", "value": "http://localhost:8000" }
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "register_api_key", "value": "" }
   ],
   "item": [
     {
@@ -19,10 +20,13 @@
       "request": {
         "method": "POST",
         "url": "{{base_url}}/register",
+        "header": [
+          { "key": "X-API-Key", "value": "{{register_api_key}}" }
+        ],
         "body": {
           "mode": "formdata",
           "formdata": [
-            { "key": "employee_id", "value": "15", "type": "text" },
+            { "key": "employee_id", "value": "NV015", "type": "text", "description": "Must match hr.employee.barcode in Odoo" },
             { "key": "file", "type": "file", "src": [] }
           ]
         }

@@ -35,11 +35,12 @@ toàn bộ embedding đã đăng ký → nếu điểm cao nhất ≥ `FACE_MATC
 gọi `OdooService` để tạo/đóng bản ghi `hr.attendance` (tự động toggle
 check-in/check-out dựa trên bản ghi đang mở của nhân viên đó trên Odoo).
 
-> **Giả định quan trọng**: `employee_id` dùng trong hệ thống này được coi là
-> trùng với `id` của bản ghi `hr.employee` trên Odoo. Nếu hai hệ thống dùng ID
-> khác nhau, sửa `OdooService._resolve_odoo_employee_id()` trong
-> `app/services/odoo_service.py` để map sang đúng ID Odoo (ví dụ tra theo mã
-> nhân viên/barcode).
+> **`employee_id` = mã nhân viên (`hr.employee.barcode`), không phải `id` số của Odoo.**
+> Đây là field chuẩn Odoo dùng cho thiết bị chấm công/kiosk (barcode/thẻ nhân
+> viên). `OdooService` tự tra `barcode` → `id` thật qua XML-RPC trước khi ghi
+> `hr.attendance` (có cache trong bộ nhớ theo tiến trình). Nếu Odoo của bạn
+> dùng field khác để định danh nhân viên, sửa
+> `OdooService._resolve_odoo_employee_id()` trong `app/services/odoo_service.py`.
 
 ## Cài đặt & chạy bằng Docker Compose
 
@@ -103,22 +104,22 @@ là thao tác chấm công công khai tại kiosk, tương tự máy chấm côn
 
 `multipart/form-data`:
 
-| field         | type | mô tả                                  |
-|---------------|------|------------------------------------------|
-| `employee_id` | int  | ID nhân viên (= `hr.employee` id trên Odoo) |
-| `file`        | file | Ảnh chứa đúng 1 khuôn mặt                |
+| field         | type   | mô tả                                              |
+|---------------|--------|-----------------------------------------------------|
+| `employee_id` | string | Mã nhân viên = `hr.employee.barcode` trên Odoo       |
+| `file`        | file   | Ảnh chứa đúng 1 khuôn mặt                            |
 
 ```bash
 curl -X POST http://localhost:8000/register \
   -H "X-API-Key: $REGISTER_API_KEY" \
-  -F "employee_id=15" \
+  -F "employee_id=NV015" \
   -F "file=@employee15.jpg"
 ```
 
 Response:
 
 ```json
-{ "success": true, "employee_id": 15, "face_id": 1, "message": "Face registered successfully" }
+{ "success": true, "employee_id": "NV015", "face_id": 1, "message": "Face registered successfully" }
 ```
 
 ### `POST /verify` — Xác thực + chấm công
@@ -143,7 +144,7 @@ Response khi thành công (tự động tạo `hr.attendance` trên Odoo):
 ```json
 {
   "success": true,
-  "employee_id": 15,
+  "employee_id": "NV015",
   "score": 0.91,
   "attendance": {
     "action": "check_in",
@@ -192,18 +193,24 @@ Hoặc import `scripts/postman_collection.json` vào Postman.
    ```
 
    Script sẽ in ra: version Odoo, xác thực thành công hay không, danh sách
-   `hr.employee` (id + tên) để bạn đối chiếu `employee_id` dùng khi gọi
-   `/register`, và kiểm tra user có quyền ghi `hr.attendance` hay không.
+   `hr.employee` (id, **barcode**, tên) và kiểm tra user có quyền ghi
+   `hr.attendance` hay không. **Dùng cột `barcode`** (không phải `id`) làm
+   `employee_id` khi gọi `/register` — nếu nhân viên chưa có barcode, gán
+   một mã trong Odoo (Employees → mở nhân viên → tab HR Settings → Barcode)
+   trước khi đăng ký khuôn mặt cho họ.
 
 3. Sửa `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_PASSWORD` trong `.env`,
    rồi `docker compose up -d --build` lại.
 
-4. Test thật: `/register` một nhân viên, sau đó `/verify` — kiểm tra trong
-   Odoo (Attendances app) đã xuất hiện bản ghi check-in chưa.
+4. Test thật: `/register` một nhân viên bằng barcode của họ, sau đó
+   `/verify` — kiểm tra trong Odoo (Attendances app) đã xuất hiện bản ghi
+   check-in chưa.
 
-> Nếu `employee_id` trong hệ thống này không trùng `id` của `hr.employee`
-> trên Odoo, sửa `OdooService._resolve_odoo_employee_id()` trong
-> `app/services/odoo_service.py` để map đúng.
+> `OdooService` khớp nhân viên qua `hr.employee.barcode` (giống cách các
+> tích hợp máy chấm công/kiosk khác trong Odoo của bạn hoạt động), rồi tự
+> tra ra `id` số thật để ghi `hr.attendance`. Nếu hệ thống của bạn định danh
+> nhân viên theo field khác, sửa `OdooService._resolve_odoo_employee_id()`
+> trong `app/services/odoo_service.py`.
 
 ## Triển khai lên domain (HTTPS)
 
@@ -270,7 +277,7 @@ Bảng `employee_face` (tự tạo lúc app khởi động qua `Base.metadata.cr
 | Cột           | Kiểu           | Ghi chú                          |
 |---------------|----------------|-----------------------------------|
 | `id`          | serial PK      |                                    |
-| `employee_id` | integer, index | ID nhân viên (nhiều dòng/nhân viên nếu đăng ký lại) |
+| `employee_id` | varchar(64), index | Mã nhân viên = `hr.employee.barcode` (nhiều dòng/nhân viên nếu đăng ký lại) |
 | `embedding`   | float[]        | Vector 512 chiều (ArcFace)         |
 | `image_path`  | varchar        | Đường dẫn ảnh gốc (tùy chọn)        |
 | `created_at`  | timestamptz    |                                    |
@@ -305,3 +312,7 @@ mô tăng lên hàng chục nghìn người, cân nhắc bổ sung extension `pg
   kèm GPS thay vì báo lỗi toàn bộ request.
 - Không có migration tool (Alembic) — schema hiện tại đơn giản nên dùng
   `create_all` lúc khởi động; thêm Alembic nếu schema sẽ tiến hóa thường xuyên.
+- Nếu Odoo của bạn đã có tích hợp thiết bị chấm công khác, kiểm tra nó dùng
+  field nào để định danh nhân viên và endpoint/token nào — dịch vụ này hoạt
+  động độc lập, tạo `hr.attendance` trực tiếp qua XML-RPC, không chia sẻ
+  endpoint/token với các tích hợp khác.

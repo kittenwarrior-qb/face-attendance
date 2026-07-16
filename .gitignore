@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv*/
 venv/
 .env
 storage/faces/*
@@ -11,4 +12,11 @@ storage/faces/*
 /*.jpg
 /*.jpeg
 /*.png
+
+# Editor/OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
 

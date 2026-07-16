@@ -15,7 +15,7 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 @dataclass
 class MatchResult:
-    employee_id: int
+    employee_id: str
     score: float
 
 
@@ -29,7 +29,7 @@ class EmbeddingService:
     def register(
         self,
         db: Session,
-        employee_id: int,
+        employee_id: str,
         embedding: np.ndarray,
         image_path: str | None = None,
     ) -> EmployeeFace:
@@ -40,7 +40,7 @@ class EmbeddingService:
         records = self._repository.get_all(db)
 
         best_score = -1.0
-        best_employee_id: int | None = None
+        best_employee_id: str | None = None
         for record in records:
             score = cosine_similarity(embedding, np.array(record.embedding, dtype=np.float32))
             if score > best_score:

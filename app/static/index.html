@@ -79,6 +79,28 @@
     color: #fff;
     text-align: center;
   }
+  .countdown {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 88px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.6);
+    background: rgba(0,0,0,0.25);
+  }
+  .countdown.show { display: flex; }
+  .preview-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+  }
+  .preview-img.show { display: block; }
   .result-card {
     border-radius: 14px;
     padding: 14px 16px;
@@ -158,7 +180,9 @@
 
   <div class="video-wrap">
     <video id="video" autoplay playsinline muted></video>
+    <img id="capturePreview" class="preview-img" alt="Ảnh vừa chụp">
     <div class="ring" id="ring"></div>
+    <div class="countdown" id="countdown"></div>
     <div class="status-bar" id="statusBar">Đang khởi động camera...</div>
   </div>
 
@@ -178,9 +202,13 @@
   <details>
     <summary>➕ Đăng ký nhân viên mới</summary>
     <div class="register-body">
-      <input type="number" id="employeeIdInput" placeholder="Mã nhân viên (Odoo employee id)" min="1">
+      <input type="text" id="employeeIdInput" placeholder="Mã nhân viên (barcode Odoo)" autocomplete="off">
       <input type="password" id="apiKeyInput" placeholder="API key (nếu server yêu cầu)" autocomplete="off">
-      <button class="btn" id="registerBtn">Chụp & Đăng ký khuôn mặt</button>
+      <button class="btn" id="captureBtn">📸 Chụp ảnh để đăng ký</button>
+      <div class="row" id="previewActions" style="display:none">
+        <button class="btn secondary" id="retakeBtn">🔄 Chụp lại</button>
+        <button class="btn" id="confirmRegisterBtn">✅ Xác nhận & Đăng ký</button>
+      </div>
       <div class="hint" id="registerResult"></div>
     </div>
   </details>
@@ -206,8 +234,13 @@ const resultAttendance = document.getElementById('resultAttendance');
 const resultMessage = document.getElementById('resultMessage');
 const employeeIdInput = document.getElementById('employeeIdInput');
 const apiKeyInput = document.getElementById('apiKeyInput');
-const registerBtn = document.getElementById('registerBtn');
+const captureBtn = document.getElementById('captureBtn');
+const previewActions = document.getElementById('previewActions');
+const retakeBtn = document.getElementById('retakeBtn');
+const confirmRegisterBtn = document.getElementById('confirmRegisterBtn');
 const registerResult = document.getElementById('registerResult');
+const capturePreview = document.getElementById('capturePreview');
+const countdownEl = document.getElementById('countdown');
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d');
@@ -218,6 +251,10 @@ let scanning = true;
 let busy = false;
 let cooldownUntil = 0;
 let gpsCoords = null;
+let capturedBlob = null;
+let scanningPausedForCapture = false;
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function setRing(state) {
   ring.className = 'ring' + (state ? ' ' + state : '');
@@ -328,19 +365,72 @@ switchCamBtn.addEventListener('click', () => {
   startCamera();
 });
 
-registerBtn.addEventListener('click', async () => {
+function pauseScanForCapture() {
+  scanningPausedForCapture = !scanning; // remember if it was already paused by the user
+  scanning = false;
+}
+
+function resumeScanAfterCapture() {
+  if (!scanningPausedForCapture) scanning = true;
+}
+
+async function runCountdown() {
+  countdownEl.classList.add('show');
+  for (const n of [3, 2, 1]) {
+    countdownEl.textContent = n;
+    await sleep(700);
+  }
+  countdownEl.textContent = '📸';
+  await sleep(200);
+  countdownEl.classList.remove('show');
+}
+
+captureBtn.addEventListener('click', async () => {
   const employeeId = employeeIdInput.value;
   if (!employeeId) {
     registerResult.textContent = 'Nhập mã nhân viên trước đã.';
     return;
   }
-  registerBtn.disabled = true;
-  registerResult.textContent = 'Đang chụp & đăng ký...';
+  captureBtn.disabled = true;
+  pauseScanForCapture();
+  registerResult.textContent = '';
+
+  await runCountdown();
+  capturedBlob = await captureBlob();
+
+  if (!capturedBlob) {
+    registerResult.textContent = 'Không chụp được ảnh, thử lại.';
+    captureBtn.disabled = false;
+    resumeScanAfterCapture();
+    return;
+  }
+
+  capturePreview.src = URL.createObjectURL(capturedBlob);
+  capturePreview.classList.add('show');
+  captureBtn.style.display = 'none';
+  previewActions.style.display = 'flex';
+});
+
+retakeBtn.addEventListener('click', () => {
+  capturePreview.classList.remove('show');
+  previewActions.style.display = 'none';
+  captureBtn.style.display = '';
+  captureBtn.disabled = false;
+  capturedBlob = null;
+  registerResult.textContent = '';
+});
+
+confirmRegisterBtn.addEventListener('click', async () => {
+  const employeeId = employeeIdInput.value;
+  if (!capturedBlob) return;
+
+  confirmRegisterBtn.disabled = true;
+  retakeBtn.disabled = true;
+  registerResult.textContent = 'Đang đăng ký...';
   try {
-    const blob = await captureBlob();
     const form = new FormData();
     form.append('employee_id', employeeId);
-    form.append('file', blob, 'register.jpg');
+    form.append('file', capturedBlob, 'register.jpg');
     const headers = {};
     if (apiKeyInput.value) headers['X-API-Key'] = apiKeyInput.value;
     const res = await fetch('/register', { method: 'POST', body: form, headers });
@@ -348,10 +438,20 @@ registerBtn.addEventListener('click', async () => {
     registerResult.textContent = data.success
       ? ('✅ Đăng ký thành công cho nhân viên #' + data.employee_id + ' (face_id=' + data.face_id + ')')
       : ('❌ ' + (data.detail || (res.status === 401 ? 'Sai API key' : 'Đăng ký thất bại')));
+
+    if (data.success) {
+      capturePreview.classList.remove('show');
+      previewActions.style.display = 'none';
+      captureBtn.style.display = '';
+      capturedBlob = null;
+    }
   } catch (e) {
     registerResult.textContent = 'Lỗi: ' + e.message;
   } finally {
-    registerBtn.disabled = false;
+    captureBtn.disabled = false;
+    confirmRegisterBtn.disabled = false;
+    retakeBtn.disabled = false;
+    resumeScanAfterCapture();
   }
 });
 

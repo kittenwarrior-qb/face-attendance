@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from datetime import datetime
 
@@ -7,6 +8,8 @@ import numpy as np
 from fastapi import UploadFile
 
 from app.utils.exceptions import InvalidImageError
+
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 async def decode_upload_image(file: UploadFile) -> np.ndarray:
@@ -22,11 +25,16 @@ async def decode_upload_image(file: UploadFile) -> np.ndarray:
     return image
 
 
-def save_face_image(image: np.ndarray, employee_id: int, storage_dir: str) -> str:
-    """Persist the original image to disk and return its path."""
+def save_face_image(image: np.ndarray, employee_id: str, storage_dir: str) -> str:
+    """Persist the original image to disk and return its path.
+
+    employee_id is user-supplied (an Odoo barcode) so it's sanitized before
+    use in a filename to prevent path traversal / invalid path characters.
+    """
     os.makedirs(storage_dir, exist_ok=True)
+    safe_employee_id = _UNSAFE_FILENAME_CHARS.sub("_", employee_id)[:64] or "unknown"
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    filename = f"{employee_id}_{timestamp}_{uuid.uuid4().hex[:8]}.jpg"
+    filename = f"{safe_employee_id}_{timestamp}_{uuid.uuid4().hex[:8]}.jpg"
     path = os.path.join(storage_dir, filename)
     cv2.imwrite(path, image)
     return path

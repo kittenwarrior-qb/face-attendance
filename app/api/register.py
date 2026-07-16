@@ -15,7 +15,7 @@ router = APIRouter(tags=["face"])
 
 @router.post("/register", response_model=RegisterResponse, dependencies=[Depends(verify_register_api_key)])
 async def register_face(
-    employee_id: int = Form(..., description="Odoo hr.employee id"),
+    employee_id: str = Form(..., description="Employee code (matches Odoo hr.employee.barcode)"),
     file: UploadFile = File(..., description="Photo containing exactly one face"),
     db: Session = Depends(get_db),
     face_service: FaceService = Depends(get_face_service),

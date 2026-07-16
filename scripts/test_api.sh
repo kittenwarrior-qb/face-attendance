@@ -2,8 +2,10 @@
 # Quick smoke test for the Face Attendance API using curl.
 #
 # Usage:
-#   ./scripts/test_api.sh register 15 /path/to/employee15.jpg
+#   REGISTER_API_KEY=... ./scripts/test_api.sh register NV015 /path/to/employee.jpg
 #   ./scripts/test_api.sh verify /path/to/probe.jpg [latitude] [longitude]
+#
+# employee_id (e.g. "NV015") must match the employee's `barcode` field in Odoo.
 
 set -euo pipefail
 
@@ -16,9 +18,10 @@ case "$ACTION" in
     ;;
 
   register)
-    EMPLOYEE_ID="${2:?employee_id is required}"
+    EMPLOYEE_ID="${2:?employee_id (Odoo hr.employee.barcode) is required}"
     IMAGE_PATH="${3:?path to image is required}"
     curl -s -X POST "${BASE_URL}/register" \
+      -H "X-API-Key: ${REGISTER_API_KEY:-}" \
       -F "employee_id=${EMPLOYEE_ID}" \
       -F "file=@${IMAGE_PATH}" \
       | python -m json.tool
@@ -38,7 +41,7 @@ case "$ACTION" in
   *)
     echo "Usage:"
     echo "  $0 health"
-    echo "  $0 register <employee_id> <image_path>"
+    echo "  REGISTER_API_KEY=... $0 register <employee_id (barcode)> <image_path>"
     echo "  $0 verify <image_path> [latitude] [longitude]"
     exit 1
     ;;

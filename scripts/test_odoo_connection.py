@@ -30,12 +30,15 @@ def main() -> None:
     models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
     employees = models.execute_kw(
-        db, uid, password, "hr.employee", "search_read", [[]], {"fields": ["id", "name"], "limit": 20}
+        db, uid, password, "hr.employee", "search_read", [[]], {"fields": ["id", "name", "barcode"], "limit": 20}
     )
-    print(f"\nFound employees (showing up to 20 of possibly more):")
+    print("\nFound employees (showing up to 20 of possibly more):")
     for emp in employees:
-        print(f"  id={emp['id']:>5}  name={emp['name']}")
-    print("\n-> employee_id sent to POST /register and returned by /verify must match the 'id' above.")
+        print(f"  id={emp['id']:>5}  barcode={emp['barcode'] or '(none)':<12}  name={emp['name']}")
+    print(
+        "\n-> employee_id sent to POST /register and returned by /verify must match the 'barcode' "
+        "above (not 'id') - set a Barcode on the employee in Odoo if it's empty."
+    )
 
     can_write = models.execute_kw(
         db, uid, password, "hr.attendance", "check_access_rights", ["write"], {"raise_exception": False}
