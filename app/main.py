@@ -2,13 +2,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import health, register, ui, verify
 from app.config import get_settings
-from app.database.base import Base
-from app.database.session import engine
-from app.repositories.face_repository import FaceRepository
 from app.services.embedding_service import EmbeddingService
 from app.services.face_service import FaceService
 from app.services.odoo_service import OdooService
@@ -35,14 +33,10 @@ ERROR_STATUS_MAP: dict[type[FaceAttendanceError], int] = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    logger.info("Creating database tables if they do not exist...")
-    Base.metadata.create_all(bind=engine)
-
     logger.info("Initializing services...")
     app.state.face_service = FaceService(settings)
-    face_repository = FaceRepository()
-    app.state.embedding_service = EmbeddingService(face_repository, settings.face_match_threshold)
     app.state.odoo_service = OdooService(settings)
+    app.state.embedding_service = EmbeddingService(app.state.odoo_service, settings.face_match_threshold)
 
     if not settings.register_api_key:
         logger.warning(
@@ -62,6 +56,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+if settings.cors_allowed_origins_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_methods=["POST"],
+        allow_headers=["*"],
+    )
+
 app.include_router(health.router)
 app.include_router(register.router)
 app.include_router(verify.router)
@@ -71,4 +73,11 @@ app.include_router(ui.router)
 @app.exception_handler(FaceAttendanceError)
 async def face_attendance_error_handler(request: Request, exc: FaceAttendanceError) -> JSONResponse:
     status_code = ERROR_STATUS_MAP.get(type(exc), 400)
-    return JSONResponse(status_code=status_code, content={"success": False, "detail": str(exc)})
+    # `code` is the stable, language-independent exception class name; `detail`
+    # is an English message for logs/developers. Clients should localize UI
+    # text off `code`, not parse `detail` (kept in English regardless of the
+    # server's own locale, unlike Odoo's own error strings).
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": False, "code": type(exc).__name__, "detail": str(exc)},
+    )

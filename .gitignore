@@ -4,8 +4,6 @@ __pycache__/
 .venv*/
 venv/
 .env
-storage/faces/*
-!storage/faces/.gitkeep
 .pytest_cache/
 
 # Test/scratch face photos at repo root - never commit real face photos

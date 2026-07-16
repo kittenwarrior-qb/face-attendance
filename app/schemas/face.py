@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 class RegisterResponse(BaseModel):
     success: bool
     employee_id: str
-    face_id: int
+    employee_name: str
     message: str = "Face registered successfully"
 
 
@@ -26,6 +26,7 @@ class AttendanceResult(BaseModel):
 class VerifyResponse(BaseModel):
     success: bool
     employee_id: str | None = None
+    employee_name: str | None = None
     score: float | None = Field(default=None, description="Cosine similarity score in [-1, 1]")
     attendance: AttendanceResult | None = None
     message: str | None = None

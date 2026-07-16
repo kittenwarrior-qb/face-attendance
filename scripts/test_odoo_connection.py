@@ -10,6 +10,10 @@ Example:
 import sys
 import xmlrpc.client
 
+# Windows consoles default to cp1252, which can't encode Vietnamese names -
+# force UTF-8 stdout so this doesn't crash on real employee data.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def main() -> None:
     if len(sys.argv) != 5:

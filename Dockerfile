@@ -22,8 +22,6 @@ COPY app ./app
 # the model will then be downloaded lazily on first startup instead.
 RUN python -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']).prepare(ctx_id=-1)" || true
 
-RUN mkdir -p /app/storage/faces
-
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

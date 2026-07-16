@@ -1,6 +1,6 @@
 # Production overlay: adds HTTPS via Caddy (automatic Let's Encrypt cert for your
-# domain). db/api are never published to the host in docker-compose.yml itself -
-# docker-compose.override.yml is what publishes them for local dev, and passing
+# domain). api is never published to the host in docker-compose.yml itself -
+# docker-compose.override.yml is what publishes it for local dev, and passing
 # explicit -f flags here means that file is skipped, so only Caddy (80/443) ends
 # up reachable from the internet.
 #

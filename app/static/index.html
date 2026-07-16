@@ -28,10 +28,15 @@
   }
   .app {
     width: 100%;
-    max-width: 480px;
+    max-width: 420px; /* mobile-first: comfortable on phones without overflow */
     display: flex;
     flex-direction: column;
     gap: 14px;
+  }
+  @media (min-width: 992px) {
+    .app { max-width: 640px; gap: 18px; }
+    .video-wrap { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 22px; }
   }
   h1 {
     font-size: 18px;
@@ -44,31 +49,36 @@
     position: relative;
     width: 100%;
     aspect-ratio: 3 / 4;
-    background: #000;
-    border-radius: 16px;
+    background: linear-gradient(160deg, #1c1e27, #0b0c10);
+    border-radius: 24px;
     overflow: hidden;
-    border: 2px solid var(--border);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .mirror {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1); /* mirror for natural selfie view; capture reads real pixels regardless */
   }
   video {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transform: scaleX(-1); /* mirror for natural selfie view, capture uses real pixels */
+    display: block;
   }
-  .ring {
-    position: absolute;
-    inset: 0;
-    border-radius: 16px;
-    border: 4px solid transparent;
-    pointer-events: none;
-    transition: border-color 0.25s ease;
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff453a;
+    margin-right: 6px;
+    animation: dot-pulse 1.2s ease-in-out infinite;
   }
-  .ring.scanning { border-color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-  .ring.ok { border-color: var(--ok); }
-  .ring.err { border-color: var(--err); }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.35; }
-    50% { opacity: 1; }
+  .status-dot.ok { background: #32d74b; animation: none; }
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1); }
   }
   .status-bar {
     position: absolute;
@@ -179,11 +189,12 @@
   <h1>🎯 Face Attendance — Chấm công khuôn mặt</h1>
 
   <div class="video-wrap">
-    <video id="video" autoplay playsinline muted></video>
+    <div class="mirror">
+      <video id="video" autoplay playsinline muted></video>
+    </div>
     <img id="capturePreview" class="preview-img" alt="Ảnh vừa chụp">
-    <div class="ring" id="ring"></div>
     <div class="countdown" id="countdown"></div>
-    <div class="status-bar" id="statusBar">Đang khởi động camera...</div>
+    <div class="status-bar"><span class="status-dot" id="statusDot"></span><span id="statusBar">Đang khởi động camera...</span></div>
   </div>
 
   <div class="row">
@@ -222,7 +233,7 @@
 
 <script>
 const video = document.getElementById('video');
-const ring = document.getElementById('ring');
+const statusDot = document.getElementById('statusDot');
 const statusBar = document.getElementById('statusBar');
 const toggleScanBtn = document.getElementById('toggleScanBtn');
 const switchCamBtn = document.getElementById('switchCamBtn');
@@ -256,12 +267,34 @@ let scanningPausedForCapture = false;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function setRing(state) {
-  ring.className = 'ring' + (state ? ' ' + state : '');
+// Server error `code` -> friendly Vietnamese text (server's `detail` stays
+// English for logs; never shown directly to avoid mixed-language UI).
+const ERROR_MESSAGES_VI = {
+  NoFaceDetectedError: 'Không thấy khuôn mặt, đứng gần camera hơn nhé',
+  MultipleFacesDetectedError: 'Chỉ 1 người trước camera thôi nhé',
+  InvalidImageError: 'Ảnh bị lỗi, thử chụp lại',
+};
+
+// Common getUserMedia rejection reasons -> friendly Vietnamese text.
+const CAMERA_ERROR_MESSAGES_VI = {
+  NotAllowedError: 'Bạn chưa cấp quyền camera. Vào cài đặt trình duyệt để bật quyền camera cho trang này.',
+  PermissionDeniedError: 'Bạn chưa cấp quyền camera. Vào cài đặt trình duyệt để bật quyền camera cho trang này.',
+  NotFoundError: 'Không tìm thấy camera trên thiết bị này.',
+  NotReadableError: 'Camera đang được ứng dụng khác sử dụng, đóng ứng dụng đó rồi thử lại.',
+  OverconstrainedError: 'Camera không hỗ trợ cấu hình yêu cầu.',
+  SecurityError: 'Trang này cần chạy qua HTTPS (hoặc localhost) để mở được camera.',
+};
+
+function cameraErrorMessage(err) {
+  return CAMERA_ERROR_MESSAGES_VI[err.name] || ('Không mở được camera (' + err.name + ')');
 }
 
 function setStatus(text) {
   statusBar.textContent = text;
+}
+
+function setStatusDot(ok) {
+  statusDot.className = 'status-dot' + (ok ? ' ok' : '');
 }
 
 async function startCamera() {
@@ -270,15 +303,13 @@ async function startCamera() {
   }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode, width: { ideal: 720 }, height: { ideal: 960 } },
+      video: { facingMode, width: { ideal: 720 }, height: { ideal: 960 }, aspectRatio: { ideal: 3 / 4 } },
       audio: false
     });
     video.srcObject = stream;
     setStatus('Đang quét khuôn mặt...');
-    setRing('scanning');
   } catch (err) {
-    setStatus('Không mở được camera: ' + err.message + ' (cần HTTPS hoặc localhost, và cấp quyền camera)');
-    setRing('err');
+    setStatus(cameraErrorMessage(err));
   }
 }
 
@@ -305,7 +336,9 @@ function showResult(ok, data) {
   resultCard.className = 'result-card show ' + (ok ? 'ok' : 'err');
   resultTitle.className = 'result-title ' + (ok ? 'ok' : 'err');
   resultTitle.textContent = ok ? '✅ Chấm công thành công' : '❌ Không nhận diện được';
-  resultEmployee.textContent = data.employee_id != null ? ('Nhân viên: #' + data.employee_id) : '';
+  resultEmployee.textContent = data.employee_id != null
+    ? (data.employee_name ? `${data.employee_name} (#${data.employee_id})` : `#${data.employee_id}`)
+    : '';
   resultScore.textContent = data.score != null ? ('Độ tương đồng: ' + data.score.toFixed(3)) : '';
   if (data.attendance) {
     const action = data.attendance.action === 'check_in' ? 'Check-in' : 'Check-out';
@@ -335,14 +368,14 @@ async function scanLoop() {
       const data = await res.json();
 
       if (data.success) {
-        setRing('ok');
-        setStatus('Đã nhận diện nhân viên #' + data.employee_id);
+        setStatusDot(true);
+        setStatus((data.employee_name || ('#' + data.employee_id)) + ' — đã chấm công');
         showResult(true, data);
         if (navigator.vibrate) navigator.vibrate(120);
         cooldownUntil = Date.now() + 5000;
       } else {
-        setRing('scanning');
-        setStatus(res.status === 422 ? (data.detail || 'Chỉnh lại vị trí khuôn mặt') : 'Đang tìm khuôn mặt...');
+        setStatusDot(false);
+        setStatus(res.status === 422 ? (ERROR_MESSAGES_VI[data.code] || 'Chỉnh lại vị trí khuôn mặt') : 'Đang tìm khuôn mặt...');
       }
     }
   } catch (e) {
@@ -356,7 +389,6 @@ async function scanLoop() {
 toggleScanBtn.addEventListener('click', () => {
   scanning = !scanning;
   toggleScanBtn.textContent = scanning ? 'Tạm dừng quét' : 'Tiếp tục quét';
-  setRing(scanning ? 'scanning' : null);
   setStatus(scanning ? 'Đang quét khuôn mặt...' : 'Đã tạm dừng');
 });
 
@@ -436,8 +468,8 @@ confirmRegisterBtn.addEventListener('click', async () => {
     const res = await fetch('/register', { method: 'POST', body: form, headers });
     const data = await res.json();
     registerResult.textContent = data.success
-      ? ('✅ Đăng ký thành công cho nhân viên #' + data.employee_id + ' (face_id=' + data.face_id + ')')
-      : ('❌ ' + (data.detail || (res.status === 401 ? 'Sai API key' : 'Đăng ký thất bại')));
+      ? (`✅ Đăng ký thành công: ${data.employee_name} (#${data.employee_id})`)
+      : ('❌ ' + (ERROR_MESSAGES_VI[data.code] || (res.status === 401 ? 'Sai API key' : 'Đăng ký thất bại')));
 
     if (data.success) {
       capturePreview.classList.remove('show');

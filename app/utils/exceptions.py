@@ -19,3 +19,12 @@ class MultipleFacesDetectedError(FaceAttendanceError):
 
 class OdooServiceError(FaceAttendanceError):
     """Raised when the Odoo XML-RPC call fails."""
+
+
+class OdooBusinessValidationError(OdooServiceError):
+    """Raised when Odoo rejects a write due to its own business rules
+    (e.g. hr.attendance's overlap check - "employee hasn't checked out yet"),
+    as opposed to a technical/connectivity failure. Detected via Odoo's XML-RPC
+    faultCode (2 = UserError/ValidationError), not by parsing the message text,
+    since that text is localized to whatever language the Odoo UI uses.
+    """

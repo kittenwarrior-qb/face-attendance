@@ -1,21 +1,9 @@
-from collections.abc import Generator
-
 from fastapi import Depends, Header, HTTPException, Request, status
-from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.database.session import SessionLocal
 from app.services.embedding_service import EmbeddingService
 from app.services.face_service import FaceService
 from app.services.odoo_service import OdooService
-
-
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def verify_register_api_key(

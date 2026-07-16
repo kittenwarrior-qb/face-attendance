@@ -1,15 +1,33 @@
 import base64
 import http.client
+import json
 import xmlrpc.client
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
+import numpy as np
+
 from app.config import Settings
-from app.utils.exceptions import OdooServiceError
+from app.utils.exceptions import OdooBusinessValidationError, OdooServiceError
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Fixed name for the ir.attachment holding a JSON-encoded embedding on hr.employee.
+# One embedding per employee - re-registering overwrites it.
+FACE_EMBEDDING_ATTACHMENT_NAME = "face_embedding.json"
+
+# Odoo XML-RPC fault code for UserError/ValidationError/RedirectWarning (a
+# business-rule rejection) - see odoo/addons/base/controllers/rpc.py
+# RPC_FAULT_CODE_WARNING. Any other code (typically 1) is a technical/internal
+# error, not a business rule, and should not be blindly retried.
+_RPC_FAULT_CODE_WARNING = 2
+
+# Distinguishes this service's punches from Odoo's own kiosk/systray/manual
+# flows in hr.attendance.in_mode/out_mode (added via selection_add in the
+# satori_face_attendance Odoo module).
+_ATTENDANCE_MODE = "face_scan"
 
 
 class _TimeoutTransport(xmlrpc.client.Transport):
@@ -39,7 +57,9 @@ class AttendanceRecord:
 
 
 class OdooService:
-    """Talks to Odoo over XML-RPC to create/close hr.attendance records.
+    """Talks to Odoo over XML-RPC. Odoo is the only persistent store this app
+    uses: face embeddings live in a JSON ir.attachment on hr.employee, photos
+    in hr.employee.image_1920, and attendance in hr.attendance records.
 
     `employee_id` here is the human-readable code stamped on badges / entered
     at enrollment - it is matched against `hr.employee.barcode`, the standard
@@ -50,7 +70,7 @@ class OdooService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._uid: int | None = None
-        self._barcode_to_id_cache: dict[str, int] = {}
+        self._barcode_cache: dict[str, tuple[int, str]] = {}  # barcode -> (odoo_id, name)
         use_https = settings.odoo_url.startswith("https://")
         transport = _TimeoutTransport(settings.odoo_timeout, use_https=use_https)
         self._common = xmlrpc.client.ServerProxy(
@@ -91,21 +111,106 @@ class OdooService:
                 kwargs or {},
             )
         except xmlrpc.client.Fault as exc:
-            raise OdooServiceError(f"Odoo call {model}.{method} failed: {exc.faultString}") from exc
+            message = f"Odoo call {model}.{method} failed: {exc.faultString}"
+            if exc.faultCode == _RPC_FAULT_CODE_WARNING:
+                raise OdooBusinessValidationError(message) from exc
+            raise OdooServiceError(message) from exc
         except Exception as exc:
             raise OdooServiceError(f"Odoo call {model}.{method} failed: {exc}") from exc
 
-    def _resolve_odoo_employee_id(self, barcode: str) -> int:
-        if barcode in self._barcode_to_id_cache:
-            return self._barcode_to_id_cache[barcode]
+    def _resolve_odoo_employee(self, barcode: str) -> tuple[int, str]:
+        if barcode in self._barcode_cache:
+            return self._barcode_cache[barcode]
 
-        ids = self._execute("hr.employee", "search", [["barcode", "=", barcode]], kwargs={"limit": 1})
-        if not ids:
+        results = self._execute(
+            "hr.employee", "search_read", [["barcode", "=", barcode]], kwargs={"fields": ["id", "name"], "limit": 1}
+        )
+        if not results:
             raise OdooServiceError(
                 f"No hr.employee found with barcode='{barcode}' - check the employee's Barcode field in Odoo"
             )
-        self._barcode_to_id_cache[barcode] = ids[0]
-        return ids[0]
+        entry = (results[0]["id"], results[0]["name"])
+        self._barcode_cache[barcode] = entry
+        return entry
+
+    def _resolve_odoo_employee_id(self, barcode: str) -> int:
+        return self._resolve_odoo_employee(barcode)[0]
+
+    def save_face(self, employee_id: str, embedding: np.ndarray, image_bytes: bytes | None = None) -> str:
+        """Store the embedding (as a JSON ir.attachment) and optionally the photo
+        (in hr.employee.image_1920) for this employee. Odoo is the only place
+        this data lives - overwrites any previous registration for the same employee.
+        Returns the employee's display name.
+        """
+        odoo_id, name = self._resolve_odoo_employee(employee_id)
+        embedding_json = json.dumps(embedding.tolist()).encode("utf-8")
+        self._upsert_attachment(odoo_id, embedding_json)
+
+        if image_bytes is not None:
+            self._execute(
+                "hr.employee", "write", [odoo_id], {"image_1920": base64.b64encode(image_bytes).decode("ascii")}
+            )
+        return name
+
+    def _upsert_attachment(self, res_id: int, data: bytes) -> None:
+        existing = self._execute(
+            "ir.attachment",
+            "search",
+            [
+                ["res_model", "=", "hr.employee"],
+                ["res_id", "=", res_id],
+                ["name", "=", FACE_EMBEDDING_ATTACHMENT_NAME],
+            ],
+            kwargs={"limit": 1},
+        )
+        vals = {
+            "name": FACE_EMBEDDING_ATTACHMENT_NAME,
+            "datas": base64.b64encode(data).decode("ascii"),
+            "res_model": "hr.employee",
+            "res_id": res_id,
+            "mimetype": "application/json",
+        }
+        if existing:
+            self._execute("ir.attachment", "write", [existing[0]], vals)
+        else:
+            self._execute("ir.attachment", "create", vals)
+
+    def load_all_faces(self) -> dict[str, tuple[np.ndarray, str]]:
+        """Fetch every registered embedding (+ employee name) from Odoo in two
+        batched XML-RPC calls, keyed by barcode. Used to (re)build the
+        in-memory match cache.
+        """
+        employees = self._execute(
+            "hr.employee", "search_read", [["barcode", "!=", False]], kwargs={"fields": ["id", "barcode", "name"]}
+        )
+        id_to_employee = {emp["id"]: (emp["barcode"], emp["name"]) for emp in employees}
+        if not id_to_employee:
+            return {}
+
+        attachments = self._execute(
+            "ir.attachment",
+            "search_read",
+            [
+                ["res_model", "=", "hr.employee"],
+                ["res_id", "in", list(id_to_employee.keys())],
+                ["name", "=", FACE_EMBEDDING_ATTACHMENT_NAME],
+            ],
+            kwargs={"fields": ["res_id", "datas"]},
+        )
+
+        cache: dict[str, tuple[np.ndarray, str]] = {}
+        for attachment in attachments:
+            entry = id_to_employee.get(attachment["res_id"])
+            if not entry:
+                continue
+            barcode, name = entry
+            try:
+                raw = base64.b64decode(attachment["datas"])
+                values = json.loads(raw.decode("utf-8"))
+                cache[barcode] = (np.array(values, dtype=np.float32), name)
+            except Exception as exc:
+                logger.error("Failed to parse cached embedding for barcode=%s: %s", barcode, exc)
+        return cache
 
     def create_attendance(
         self,
@@ -114,8 +219,26 @@ class OdooService:
         latitude: float | None = None,
         longitude: float | None = None,
         image_bytes: bytes | None = None,
+        _retry_on_conflict: bool = True,
     ) -> AttendanceRecord:
-        """Toggle attendance: close the open check-in if one exists, else create a new check-in."""
+        """Toggle attendance: close the open check-in if one exists, else create a new check-in.
+
+        The check-in/out photo is written directly onto a dedicated hr.attendance
+        field (face_checkin_photo/face_checkout_photo - added by the
+        satori_face_attendance Odoo module) rather than as a loose ir.attachment,
+        so it renders properly in the attendance form instead of floating
+        unattached. If that module isn't installed yet, the field is dropped and
+        the base record is still created.
+
+        Odoo's own hr.attendance also has native kiosk/systray/manual check-in
+        flows, which independently read-then-write the same "is there an open
+        attendance" state this method does - two systems can race between the
+        read and the write. `in_mode`/`out_mode` are tagged "face_scan" so this
+        source is distinguishable from Odoo's own flows in the attendance list.
+        If Odoo's own overlap validation rejects the write (meaning some other
+        source won the race), this re-reads the now-current state and retries
+        the toggle exactly once instead of surfacing a raw error.
+        """
         odoo_employee_id = self._resolve_odoo_employee_id(employee_id)
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -125,71 +248,78 @@ class OdooService:
             [["employee_id", "=", odoo_employee_id], ["check_out", "=", False]],
         )
 
-        if open_ids:
-            attendance_id = open_ids[0]
-            vals: dict[str, Any] = {"check_out": ts_str}
-            if latitude is not None and longitude is not None:
-                vals.update({"out_latitude": latitude, "out_longitude": longitude})
-            self._write_with_gps_fallback(attendance_id, vals)
-            action: Literal["check_in", "check_out"] = "check_out"
-        else:
-            vals = {"employee_id": odoo_employee_id, "check_in": ts_str}
-            if latitude is not None and longitude is not None:
-                vals.update({"in_latitude": latitude, "in_longitude": longitude})
-            attendance_id = self._create_with_gps_fallback(vals)
-            action = "check_in"
-
-        if self._settings.odoo_attach_image and image_bytes:
-            self._attach_image(attendance_id, image_bytes)
+        try:
+            if open_ids:
+                attendance_id = open_ids[0]
+                vals: dict[str, Any] = {"check_out": ts_str, "out_mode": _ATTENDANCE_MODE}
+                if latitude is not None and longitude is not None:
+                    vals.update({"out_latitude": latitude, "out_longitude": longitude})
+                if image_bytes is not None:
+                    vals["face_checkout_photo"] = base64.b64encode(image_bytes).decode("ascii")
+                self._write_with_field_fallback(attendance_id, vals)
+                action: Literal["check_in", "check_out"] = "check_out"
+            else:
+                vals = {"employee_id": odoo_employee_id, "check_in": ts_str, "in_mode": _ATTENDANCE_MODE}
+                if latitude is not None and longitude is not None:
+                    vals.update({"in_latitude": latitude, "in_longitude": longitude})
+                if image_bytes is not None:
+                    vals["face_checkin_photo"] = base64.b64encode(image_bytes).decode("ascii")
+                attendance_id = self._create_with_field_fallback(vals)
+                action = "check_in"
+        except OdooBusinessValidationError:
+            if not _retry_on_conflict:
+                raise
+            logger.warning(
+                "Odoo rejected the attendance write for employee_id=%s (likely raced with another "
+                "check-in source, e.g. kiosk/systray) - re-checking current state and retrying once",
+                employee_id,
+            )
+            return self.create_attendance(
+                employee_id, timestamp, latitude, longitude, image_bytes, _retry_on_conflict=False
+            )
 
         logger.info("Odoo %s recorded for employee_id=%s (attendance_id=%s)", action, employee_id, attendance_id)
         return AttendanceRecord(action=action, odoo_attendance_id=attendance_id, timestamp=timestamp)
 
-    def _write_with_gps_fallback(self, attendance_id: int, vals: dict[str, Any]) -> None:
+    def _write_with_field_fallback(self, attendance_id: int, vals: dict[str, Any]) -> None:
         try:
             self._execute("hr.attendance", "write", [attendance_id], vals)
         except OdooServiceError as exc:
-            if self._is_unknown_field_error(exc) and self._strip_gps_fields(vals):
-                logger.warning("GPS fields not available on hr.attendance, retrying without them")
+            if self._is_unknown_field_error(exc) and self._strip_optional_fields(vals):
+                logger.warning("Some optional fields not available on hr.attendance, retrying without them")
                 self._execute("hr.attendance", "write", [attendance_id], vals)
             else:
                 raise
 
-    def _create_with_gps_fallback(self, vals: dict[str, Any]) -> int:
+    def _create_with_field_fallback(self, vals: dict[str, Any]) -> int:
         try:
             return self._execute("hr.attendance", "create", vals)
         except OdooServiceError as exc:
-            if self._is_unknown_field_error(exc) and self._strip_gps_fields(vals):
-                logger.warning("GPS fields not available on hr.attendance, retrying without them")
+            if self._is_unknown_field_error(exc) and self._strip_optional_fields(vals):
+                logger.warning("Some optional fields not available on hr.attendance, retrying without them")
                 return self._execute("hr.attendance", "create", vals)
             raise
 
     @staticmethod
     def _is_unknown_field_error(exc: OdooServiceError) -> bool:
         message = str(exc).lower()
-        return "invalid field" in message or "unknown field" in message or "latitude" in message
+        return "invalid field" in message or "unknown field" in message
 
     @staticmethod
-    def _strip_gps_fields(vals: dict[str, Any]) -> bool:
-        gps_keys = ["in_latitude", "in_longitude", "out_latitude", "out_longitude"]
+    def _strip_optional_fields(vals: dict[str, Any]) -> bool:
+        """Drop fields that may not exist on hr.attendance in this Odoo (GPS
+        columns from satori_attendance, photo columns from
+        satori_face_attendance) so the base check-in/out still succeeds."""
+        optional_keys = [
+            "in_latitude",
+            "in_longitude",
+            "out_latitude",
+            "out_longitude",
+            "face_checkin_photo",
+            "face_checkout_photo",
+        ]
         removed = False
-        for key in gps_keys:
+        for key in optional_keys:
             if vals.pop(key, None) is not None:
                 removed = True
         return removed
-
-    def _attach_image(self, attendance_id: int, image_bytes: bytes) -> None:
-        try:
-            self._execute(
-                "ir.attachment",
-                "create",
-                {
-                    "name": f"attendance_{attendance_id}.jpg",
-                    "type": "binary",
-                    "datas": base64.b64encode(image_bytes).decode("ascii"),
-                    "res_model": "hr.attendance",
-                    "res_id": attendance_id,
-                },
-            )
-        except OdooServiceError as exc:
-            logger.error("Failed to attach image to hr.attendance %s: %s", attendance_id, exc)
