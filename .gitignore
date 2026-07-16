@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+storage/faces/*
+!storage/faces/.gitkeep
+.pytest_cache/

@@ -1,0 +1,47 @@
+{
+  "info": {
+    "name": "Face Attendance API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/health"
+      }
+    },
+    {
+      "name": "Register Face",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/register",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "employee_id", "value": "15", "type": "text" },
+            { "key": "file", "type": "file", "src": [] }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Verify Face (Attendance)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/verify",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": [] },
+            { "key": "latitude", "value": "10.7769", "type": "text" },
+            { "key": "longitude", "value": "106.7009", "type": "text" }
+          ]
+        }
+      }
+    }
+  ]
+}

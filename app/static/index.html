@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Face Attendance</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8eaed;
+    --muted: #8b909c;
+    --accent: #4f8cff;
+    --ok: #2ecc71;
+    --err: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 16px;
+  }
+  .app {
+    width: 100%;
+    max-width: 480px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    margin: 8px 0 0;
+    color: var(--text);
+  }
+  .video-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    background: #000;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 2px solid var(--border);
+  }
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* mirror for natural selfie view, capture uses real pixels */
+  }
+  .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    border: 4px solid transparent;
+    pointer-events: none;
+    transition: border-color 0.25s ease;
+  }
+  .ring.scanning { border-color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  .ring.ok { border-color: var(--ok); }
+  .ring.err { border-color: var(--err); }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+  }
+  .status-bar {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    padding: 10px 12px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.75));
+    font-size: 13px;
+    color: #fff;
+    text-align: center;
+  }
+  .result-card {
+    border-radius: 14px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    display: none;
+  }
+  .result-card.show { display: block; }
+  .result-card.ok { border-color: var(--ok); }
+  .result-card.err { border-color: var(--err); }
+  .result-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .result-title.ok { color: var(--ok); }
+  .result-title.err { color: var(--err); }
+  .result-line { font-size: 13px; color: var(--muted); margin: 2px 0; }
+  .btn {
+    appearance: none;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #fff;
+    background: var(--accent);
+  }
+  .btn.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+
+  details {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    padding: 10px 14px;
+  }
+  summary {
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .register-body {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  input[type=number] {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #0f1115;
+    color: var(--text);
+    font-size: 14px;
+  }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--border);
+    color: var(--muted);
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>🎯 Face Attendance — Chấm công khuôn mặt</h1>
+
+  <div class="video-wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <div class="ring" id="ring"></div>
+    <div class="status-bar" id="statusBar">Đang khởi động camera...</div>
+  </div>
+
+  <div class="row">
+    <button class="btn" id="toggleScanBtn">Tạm dừng quét</button>
+    <button class="btn secondary" id="switchCamBtn">Đổi camera</button>
+  </div>
+
+  <div class="result-card" id="resultCard">
+    <div class="result-title" id="resultTitle"></div>
+    <div class="result-line" id="resultEmployee"></div>
+    <div class="result-line" id="resultScore"></div>
+    <div class="result-line" id="resultAttendance"></div>
+    <div class="result-line" id="resultMessage"></div>
+  </div>
+
+  <details>
+    <summary>➕ Đăng ký nhân viên mới</summary>
+    <div class="register-body">
+      <input type="number" id="employeeIdInput" placeholder="Mã nhân viên (Odoo employee id)" min="1">
+      <input type="password" id="apiKeyInput" placeholder="API key (nếu server yêu cầu)" autocomplete="off">
+      <button class="btn" id="registerBtn">Chụp & Đăng ký khuôn mặt</button>
+      <div class="hint" id="registerResult"></div>
+    </div>
+  </details>
+
+  <p class="hint">
+    Mẹo: chỉ đứng 1 người trước camera, nhìn thẳng, đủ sáng.
+    Hệ thống tự quét mỗi ~1.8s và tạm nghỉ 5s sau khi chấm công thành công.
+    <span class="badge">getUserMedia yêu cầu HTTPS (hoặc localhost) để hoạt động trên điện thoại</span>
+  </p>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const ring = document.getElementById('ring');
+const statusBar = document.getElementById('statusBar');
+const toggleScanBtn = document.getElementById('toggleScanBtn');
+const switchCamBtn = document.getElementById('switchCamBtn');
+const resultCard = document.getElementById('resultCard');
+const resultTitle = document.getElementById('resultTitle');
+const resultEmployee = document.getElementById('resultEmployee');
+const resultScore = document.getElementById('resultScore');
+const resultAttendance = document.getElementById('resultAttendance');
+const resultMessage = document.getElementById('resultMessage');
+const employeeIdInput = document.getElementById('employeeIdInput');
+const apiKeyInput = document.getElementById('apiKeyInput');
+const registerBtn = document.getElementById('registerBtn');
+const registerResult = document.getElementById('registerResult');
+
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+
+let stream = null;
+let facingMode = 'user';
+let scanning = true;
+let busy = false;
+let cooldownUntil = 0;
+let gpsCoords = null;
+
+function setRing(state) {
+  ring.className = 'ring' + (state ? ' ' + state : '');
+}
+
+function setStatus(text) {
+  statusBar.textContent = text;
+}
+
+async function startCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode, width: { ideal: 720 }, height: { ideal: 960 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    setStatus('Đang quét khuôn mặt...');
+    setRing('scanning');
+  } catch (err) {
+    setStatus('Không mở được camera: ' + err.message + ' (cần HTTPS hoặc localhost, và cấp quyền camera)');
+    setRing('err');
+  }
+}
+
+function captureBlob() {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return Promise.resolve(null);
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(video, 0, 0, w, h); // real (unmirrored) pixels, regardless of CSS mirror on <video>
+  return new Promise(resolve => canvas.toBlob(b => resolve(b), 'image/jpeg', 0.85));
+}
+
+function tryGetGPS() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    pos => { gpsCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude }; },
+    () => { gpsCoords = null; },
+    { timeout: 4000 }
+  );
+}
+
+function showResult(ok, data) {
+  resultCard.classList.add('show');
+  resultCard.className = 'result-card show ' + (ok ? 'ok' : 'err');
+  resultTitle.className = 'result-title ' + (ok ? 'ok' : 'err');
+  resultTitle.textContent = ok ? '✅ Chấm công thành công' : '❌ Không nhận diện được';
+  resultEmployee.textContent = data.employee_id != null ? ('Nhân viên: #' + data.employee_id) : '';
+  resultScore.textContent = data.score != null ? ('Độ tương đồng: ' + data.score.toFixed(3)) : '';
+  if (data.attendance) {
+    const action = data.attendance.action === 'check_in' ? 'Check-in' : 'Check-out';
+    resultAttendance.textContent = action + ' lúc ' + new Date(data.attendance.timestamp).toLocaleTimeString('vi-VN');
+  } else {
+    resultAttendance.textContent = '';
+  }
+  resultMessage.textContent = data.message || '';
+}
+
+async function scanLoop() {
+  if (!scanning || busy || Date.now() < cooldownUntil) {
+    requestAnimationFrame(() => setTimeout(scanLoop, 300));
+    return;
+  }
+  busy = true;
+  try {
+    const blob = await captureBlob();
+    if (blob) {
+      const form = new FormData();
+      form.append('file', blob, 'scan.jpg');
+      if (gpsCoords) {
+        form.append('latitude', gpsCoords.lat);
+        form.append('longitude', gpsCoords.lon);
+      }
+      const res = await fetch('/verify', { method: 'POST', body: form });
+      const data = await res.json();
+
+      if (data.success) {
+        setRing('ok');
+        setStatus('Đã nhận diện nhân viên #' + data.employee_id);
+        showResult(true, data);
+        if (navigator.vibrate) navigator.vibrate(120);
+        cooldownUntil = Date.now() + 5000;
+      } else {
+        setRing('scanning');
+        setStatus(res.status === 422 ? (data.detail || 'Chỉnh lại vị trí khuôn mặt') : 'Đang tìm khuôn mặt...');
+      }
+    }
+  } catch (e) {
+    setStatus('Lỗi kết nối server: ' + e.message);
+  } finally {
+    busy = false;
+    setTimeout(scanLoop, 1800);
+  }
+}
+
+toggleScanBtn.addEventListener('click', () => {
+  scanning = !scanning;
+  toggleScanBtn.textContent = scanning ? 'Tạm dừng quét' : 'Tiếp tục quét';
+  setRing(scanning ? 'scanning' : null);
+  setStatus(scanning ? 'Đang quét khuôn mặt...' : 'Đã tạm dừng');
+});
+
+switchCamBtn.addEventListener('click', () => {
+  facingMode = facingMode === 'user' ? 'environment' : 'user';
+  startCamera();
+});
+
+registerBtn.addEventListener('click', async () => {
+  const employeeId = employeeIdInput.value;
+  if (!employeeId) {
+    registerResult.textContent = 'Nhập mã nhân viên trước đã.';
+    return;
+  }
+  registerBtn.disabled = true;
+  registerResult.textContent = 'Đang chụp & đăng ký...';
+  try {
+    const blob = await captureBlob();
+    const form = new FormData();
+    form.append('employee_id', employeeId);
+    form.append('file', blob, 'register.jpg');
+    const headers = {};
+    if (apiKeyInput.value) headers['X-API-Key'] = apiKeyInput.value;
+    const res = await fetch('/register', { method: 'POST', body: form, headers });
+    const data = await res.json();
+    registerResult.textContent = data.success
+      ? ('✅ Đăng ký thành công cho nhân viên #' + data.employee_id + ' (face_id=' + data.face_id + ')')
+      : ('❌ ' + (data.detail || (res.status === 401 ? 'Sai API key' : 'Đăng ký thất bại')));
+  } catch (e) {
+    registerResult.textContent = 'Lỗi: ' + e.message;
+  } finally {
+    registerBtn.disabled = false;
+  }
+});
+
+tryGetGPS();
+startCamera().then(scanLoop);
+</script>
+</body>
+</html>
