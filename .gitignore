@@ -6,3 +6,9 @@ venv/
 storage/faces/*
 !storage/faces/.gitkeep
 .pytest_cache/
+
+# Test/scratch face photos at repo root - never commit real face photos
+/*.jpg
+/*.jpeg
+/*.png
+

@@ -1,5 +1,8 @@
 # Production overlay: adds HTTPS via Caddy (automatic Let's Encrypt cert for your
-# domain) and stops publishing db/api ports directly to the internet.
+# domain). db/api are never published to the host in docker-compose.yml itself -
+# docker-compose.override.yml is what publishes them for local dev, and passing
+# explicit -f flags here means that file is skipped, so only Caddy (80/443) ends
+# up reachable from the internet.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
@@ -10,11 +13,7 @@
 #   - Domain configured in ./Caddyfile
 
 services:
-  db:
-    ports: []  # Postgres stays internal to the compose network only
-
   api:
-    ports: []  # only reachable through Caddy now
     restart: always
 
   caddy:

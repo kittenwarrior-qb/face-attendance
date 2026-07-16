@@ -1,0 +1,15 @@
+# Auto-loaded by plain `docker compose up` (local dev only).
+# Publishes ports directly to the host for convenience while developing.
+#
+# Production deploys explicitly pass -f flags (docker compose -f docker-compose.yml
+# -f docker-compose.prod.yml ...), which skips this file automatically - so db/api
+# stay unpublished and only Caddy (80/443) is reachable from the internet.
+
+services:
+  db:
+    ports:
+      - "5432:5432"
+
+  api:
+    ports:
+      - "8000:8000"
