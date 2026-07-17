@@ -3,7 +3,7 @@ import http.client
 import json
 import xmlrpc.client
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import numpy as np
@@ -28,6 +28,13 @@ _RPC_FAULT_CODE_WARNING = 2
 # flows in hr.attendance.in_mode/out_mode (added via selection_add in the
 # satori_face_attendance Odoo module).
 _ATTENDANCE_MODE = "face_scan"
+
+# A face-scan check-in left un-closed counts as an active session only for this
+# many hours. Beyond that we assume the employee forgot to check out.
+_MAX_OPEN_SESSION_HOURS = 16
+# When capping such a forgotten session, assume a standard shift length rather
+# than the raw (possibly multi-day) gap to the next scan.
+_ASSUMED_SHIFT_HOURS = 8
 
 
 class _TimeoutTransport(xmlrpc.client.Transport):
@@ -242,15 +249,11 @@ class OdooService:
         odoo_employee_id = self._resolve_odoo_employee_id(employee_id)
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
-        open_ids = self._execute(
-            "hr.attendance",
-            "search",
-            [["employee_id", "=", odoo_employee_id], ["check_out", "=", False]],
-        )
+        open_id = self._open_attendance_to_close(odoo_employee_id, timestamp)
 
         try:
-            if open_ids:
-                attendance_id = open_ids[0]
+            if open_id is not None:
+                attendance_id = open_id
                 vals: dict[str, Any] = {"check_out": ts_str, "out_mode": _ATTENDANCE_MODE}
                 if latitude is not None and longitude is not None:
                     vals.update({"out_latitude": latitude, "out_longitude": longitude})
@@ -280,6 +283,49 @@ class OdooService:
 
         logger.info("Odoo %s recorded for employee_id=%s (attendance_id=%s)", action, employee_id, attendance_id)
         return AttendanceRecord(action=action, odoo_attendance_id=attendance_id, timestamp=timestamp)
+
+    def _open_attendance_to_close(self, odoo_employee_id: int, timestamp: datetime) -> int | None:
+        """Decide whether this scan closes an in-progress session or starts a
+        new check-in.
+
+        Returns the id of an open (check_out == False) attendance that should be
+        closed by this scan, or None if this scan should open a fresh check-in.
+
+        A record whose check_in is within `_MAX_OPEN_SESSION_HOURS` of now is a
+        genuine in-progress session -> return it (this scan is the check-out).
+        If the only open record(s) are older than that, the employee almost
+        certainly forgot to check out: each stale record is capped at a nominal
+        shift length (so it stops being an open, ever-growing session) and None
+        is returned so this scan opens a new check-in. Without this, tomorrow's
+        check-in would be silently recorded as yesterday's check-out, producing
+        multi-day `worked_hours` records.
+        """
+        open_records = self._execute(
+            "hr.attendance",
+            "search_read",
+            [["employee_id", "=", odoo_employee_id], ["check_out", "=", False]],
+            kwargs={"fields": ["id", "check_in"], "order": "check_in desc"},
+        )
+        if not open_records:
+            return None
+
+        now_naive = timestamp.astimezone(timezone.utc).replace(tzinfo=None) if timestamp.tzinfo else timestamp
+        newest = open_records[0]
+        newest_check_in = datetime.strptime(newest["check_in"], "%Y-%m-%d %H:%M:%S")
+        if now_naive - newest_check_in <= timedelta(hours=_MAX_OPEN_SESSION_HOURS):
+            return newest["id"]
+
+        # Every open record is stale (newest is, so any older one is too): cap
+        # each at a standard shift so none stays open, then start a new check-in.
+        for record in open_records:
+            check_in = datetime.strptime(record["check_in"], "%Y-%m-%d %H:%M:%S")
+            capped = (check_in + timedelta(hours=_ASSUMED_SHIFT_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+            self._write_with_field_fallback(record["id"], {"check_out": capped, "out_mode": _ATTENDANCE_MODE})
+            logger.warning(
+                "Auto-closed stale open attendance %s (check_in=%s) at +%dh; a new check-in will be created",
+                record["id"], record["check_in"], _ASSUMED_SHIFT_HOURS,
+            )
+        return None
 
     def _write_with_field_fallback(self, attendance_id: int, vals: dict[str, Any]) -> None:
         try:
