@@ -33,6 +33,13 @@ class FaceService:
         Raises NoFaceDetectedError / MultipleFacesDetectedError otherwise, since
         this system expects exactly one person in front of the camera at a time.
         """
+        return self.extract_single_face(image)[0]
+
+    def extract_single_face(self, image: np.ndarray) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+        """Like extract_single_embedding, but also returns the face's bounding
+        box as (x, y, w, h) ints - needed by the liveness check, which scores
+        a scaled crop around the detected face rather than the whole frame.
+        """
         faces = self._app.get(image)
 
         if len(faces) == 0:
@@ -42,4 +49,7 @@ class FaceService:
                 f"Expected exactly 1 face, found {len(faces)}. Only one person should be in frame."
             )
 
-        return faces[0].normed_embedding.astype(np.float32)
+        face = faces[0]
+        x1, y1, x2, y2 = (int(v) for v in face.bbox)
+        bbox_xywh = (x1, y1, max(x2 - x1, 1), max(y2 - y1, 1))
+        return face.normed_embedding.astype(np.float32), bbox_xywh

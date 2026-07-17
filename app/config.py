@@ -37,6 +37,21 @@ class Settings(BaseSettings):
     def cors_allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
 
+    # --- Liveness (anti-spoofing) ---
+    # off     = skip the check entirely.
+    # warn    = run it and log the score, but never block (use this first to
+    #           calibrate the threshold against real employees/cameras).
+    # enforce = reject verification when the face scores below the threshold.
+    liveness_mode: str = "off"
+    # Minimum mean "real" probability (0..1) from the MiniFASNet ensemble.
+    liveness_threshold: float = 0.5
+    # Override the bundled model directory (app/models_data) if needed.
+    liveness_model_dir: str = ""
+
+    @property
+    def liveness_active(self) -> bool:
+        return self.liveness_mode in ("warn", "enforce")
+
     # --- Odoo ---
     odoo_url: str = "http://localhost:8069"
     odoo_db: str = "odoo"

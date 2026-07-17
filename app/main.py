@@ -16,6 +16,7 @@ from app.utils.exceptions import (
     MultipleFacesDetectedError,
     NoFaceDetectedError,
     OdooServiceError,
+    SpoofDetectedError,
 )
 from app.utils.logger import get_logger, setup_logging
 
@@ -27,6 +28,7 @@ ERROR_STATUS_MAP: dict[type[FaceAttendanceError], int] = {
     InvalidImageError: 400,
     NoFaceDetectedError: 422,
     MultipleFacesDetectedError: 422,
+    SpoofDetectedError: 422,
     OdooServiceError: 502,
 }
 
@@ -37,6 +39,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.face_service = FaceService(settings)
     app.state.odoo_service = OdooService(settings)
     app.state.embedding_service = EmbeddingService(app.state.odoo_service, settings.face_match_threshold)
+
+    if settings.liveness_active:
+        from app.services.liveness_service import LivenessService
+
+        app.state.liveness_service = LivenessService(settings)
 
     if not settings.register_api_key:
         logger.warning(

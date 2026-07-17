@@ -17,6 +17,13 @@ class MultipleFacesDetectedError(FaceAttendanceError):
     """Raised when more than one face is found in the image."""
 
 
+class SpoofDetectedError(FaceAttendanceError):
+    """Raised (in liveness enforce mode) when the anti-spoofing model decides
+    the face is a presentation attack - a printed photo or a phone/laptop
+    screen held up to the camera - rather than a live person.
+    """
+
+
 class OdooServiceError(FaceAttendanceError):
     """Raised when the Odoo XML-RPC call fails."""
 

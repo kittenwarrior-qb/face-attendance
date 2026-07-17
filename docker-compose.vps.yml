@@ -1,0 +1,25 @@
+# VPS-specific overlay: attaches the api container to the shared network that
+# the host's existing Caddy (from the coin-em project) uses to route
+# attendance.quocbui.dev -> face-attendance-api-1:8000.
+#
+# Without this, every `docker compose up` recreate detaches the container from
+# that network (manual `docker network connect` does not survive recreates) and
+# the domain 502s until someone reconnects it by hand.
+#
+# Usage on the VPS:
+#   docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build
+#
+# Local dev doesn't use this file (the network doesn't exist there); plain
+# `docker compose up` keeps working via docker-compose.override.yml.
+
+services:
+  api:
+    restart: always
+    networks:
+      default: {}
+      emcoin: {}
+
+networks:
+  emcoin:
+    external: true
+    name: coin-em_emcoin-network

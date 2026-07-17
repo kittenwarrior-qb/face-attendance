@@ -28,3 +28,8 @@ def get_embedding_service(request: Request) -> EmbeddingService:
 
 def get_odoo_service(request: Request) -> OdooService:
     return request.app.state.odoo_service
+
+
+def get_liveness_service(request: Request):
+    """Returns the LivenessService, or None when LIVENESS_MODE=off."""
+    return getattr(request.app.state, "liveness_service", None)

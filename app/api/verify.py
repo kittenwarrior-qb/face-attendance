@@ -2,13 +2,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
-from app.api.deps import get_embedding_service, get_face_service, get_odoo_service
+from app.api.deps import get_embedding_service, get_face_service, get_liveness_service, get_odoo_service
 from app.config import Settings, get_settings
 from app.schemas.face import AttendanceResult, GPSPoint, VerifyResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.face_service import FaceService
 from app.services.odoo_service import OdooService
-from app.utils.exceptions import OdooServiceError
+from app.utils.exceptions import OdooServiceError, SpoofDetectedError
 from app.utils.image_utils import decode_upload_image, encode_image_to_jpeg
 from app.utils.logger import get_logger
 
@@ -24,10 +24,24 @@ async def verify_face(
     face_service: FaceService = Depends(get_face_service),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     odoo_service: OdooService = Depends(get_odoo_service),
+    liveness_service=Depends(get_liveness_service),
     settings: Settings = Depends(get_settings),
 ) -> VerifyResponse:
     image = await decode_upload_image(file)
-    embedding = face_service.extract_single_embedding(image)
+    embedding, bbox = face_service.extract_single_face(image)
+
+    if liveness_service is not None:
+        liveness = liveness_service.check(image, bbox)
+        if not liveness.is_real:
+            if settings.liveness_mode == "enforce":
+                logger.warning("Spoof attempt blocked (real_score=%.3f)", liveness.real_score)
+                raise SpoofDetectedError(
+                    f"Face looks like a photo/screen, not a live person (real_score={liveness.real_score:.3f})"
+                )
+            # warn mode: log for threshold calibration, but let the scan through.
+            logger.warning("Liveness below threshold but mode=warn (real_score=%.3f)", liveness.real_score)
+        else:
+            logger.info("Liveness ok (real_score=%.3f)", liveness.real_score)
 
     match = embedding_service.find_best_match(embedding)
     if match is None:
