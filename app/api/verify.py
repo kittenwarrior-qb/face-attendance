@@ -8,7 +8,7 @@ from app.schemas.face import AttendanceResult, GPSPoint, VerifyResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.face_service import FaceService
 from app.services.odoo_service import OdooService
-from app.utils.exceptions import OdooServiceError, SpoofDetectedError
+from app.utils.exceptions import OdooBusinessValidationError, OdooServiceError, SpoofDetectedError
 from app.utils.image_utils import decode_upload_image, encode_image_to_jpeg
 from app.utils.logger import get_logger
 
@@ -18,7 +18,8 @@ router = APIRouter(tags=["face"])
 
 @router.post("/verify", response_model=VerifyResponse)
 async def verify_face(
-    file: UploadFile = File(..., description="Photo containing exactly one face"),
+    file: UploadFile = File(..., description="First camera frame containing exactly one face"),
+    files: list[UploadFile] | None = File(None, description="Additional camera frames"),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
     face_service: FaceService = Depends(get_face_service),
@@ -31,12 +32,23 @@ async def verify_face(
     embedding, bbox = face_service.extract_single_face(image)
 
     if liveness_service is not None:
-        liveness = liveness_service.check(image, bbox)
+        frames = [(image, bbox)]
+        if files:
+            for extra_file in files:
+                extra_image = await decode_upload_image(extra_file)
+                _, extra_bbox = face_service.extract_single_face(extra_image)
+                frames.append((extra_image, extra_bbox))
+        if settings.liveness_require_sequence and len(frames) < settings.liveness_min_frames:
+            raise SpoofDetectedError(
+                f"Verification requires at least {settings.liveness_min_frames} camera frames"
+            )
+        liveness = liveness_service.check_sequence(frames) if len(frames) > 1 else liveness_service.check(image, bbox)
         if not liveness.is_real:
             if settings.liveness_mode == "enforce":
                 logger.warning("Spoof attempt blocked (real_score=%.3f)", liveness.real_score)
                 raise SpoofDetectedError(
-                    f"Face looks like a photo/screen, not a live person (real_score={liveness.real_score:.3f})"
+                    f"Face looks like a photo/screen, not a live person "
+                    f"(real_score={liveness.real_score:.3f}, temporal_delta={liveness.temporal_delta:.4f})"
                 )
             # warn mode: log for threshold calibration, but let the scan through.
             logger.warning("Liveness below threshold but mode=warn (real_score=%.3f)", liveness.real_score)
@@ -59,6 +71,15 @@ async def verify_face(
             latitude=latitude,
             longitude=longitude,
             image_bytes=image_bytes,
+        )
+    except OdooBusinessValidationError as exc:
+        logger.info("Attendance rejected by Odoo for employee_id=%s: %s", match.employee_id, exc)
+        return VerifyResponse(
+            success=False,
+            employee_id=match.employee_id,
+            employee_name=match.employee_name,
+            score=match.score,
+            message="Face recognized but attendance is not permitted: %s" % exc,
         )
     except OdooServiceError as exc:
         logger.error("Verified employee_id=%s but Odoo attendance failed: %s", match.employee_id, exc)

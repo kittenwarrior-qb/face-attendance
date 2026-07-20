@@ -42,9 +42,12 @@ class Settings(BaseSettings):
     # warn    = run it and log the score, but never block (use this first to
     #           calibrate the threshold against real employees/cameras).
     # enforce = reject verification when the face scores below the threshold.
-    liveness_mode: str = "off"
+    liveness_mode: str = "enforce"
     # Minimum mean "real" probability (0..1) from the MiniFASNet ensemble.
     liveness_threshold: float = 0.5
+    liveness_require_sequence: bool = True
+    liveness_min_frames: int = 3
+    liveness_min_temporal_delta: float = 0.003
     # Override the bundled model directory (app/models_data) if needed.
     liveness_model_dir: str = ""
 

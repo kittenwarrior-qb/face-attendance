@@ -323,6 +323,17 @@ function captureBlob() {
   return new Promise(resolve => canvas.toBlob(b => resolve(b), 'image/jpeg', 0.85));
 }
 
+async function captureSequence(count = 3, intervalMs = 220) {
+  const frames = [];
+  for (let i = 0; i < count; i++) {
+    const blob = await captureBlob();
+    if (!blob) return [];
+    frames.push(blob);
+    if (i + 1 < count) await sleep(intervalMs);
+  }
+  return frames;
+}
+
 function tryGetGPS() {
   if (!navigator.geolocation) return;
   navigator.geolocation.getCurrentPosition(
@@ -357,10 +368,11 @@ async function scanLoop() {
   }
   busy = true;
   try {
-    const blob = await captureBlob();
-    if (blob) {
+    const frames = await captureSequence(3, 220);
+    if (frames.length) {
       const form = new FormData();
-      form.append('file', blob, 'scan.jpg');
+      form.append('file', frames[0], 'scan-1.jpg');
+      frames.slice(1).forEach((frame, i) => form.append('files', frame, `scan-${i + 2}.jpg`));
       if (gpsCoords) {
         form.append('latitude', gpsCoords.lat);
         form.append('longitude', gpsCoords.lon);

@@ -39,12 +39,15 @@ _REAL_CLASS_INDEX = 1
 class LivenessResult:
     is_real: bool
     real_score: float  # mean probability of the "real" class across the ensemble
+    frame_count: int = 1
+    temporal_delta: float = 0.0
 
 
 class LivenessService:
     def __init__(self, settings: Settings) -> None:
         model_dir = Path(settings.liveness_model_dir) if settings.liveness_model_dir else _DEFAULT_MODEL_DIR
         self._threshold = settings.liveness_threshold
+        self._min_temporal_delta = settings.liveness_min_temporal_delta
         self._sessions: list[tuple[ort.InferenceSession, float]] = []
         for filename, scale in _MODELS:
             path = model_dir / filename
@@ -74,6 +77,31 @@ class LivenessService:
 
         real_score = float(probs[_REAL_CLASS_INDEX])
         return LivenessResult(is_real=real_score >= self._threshold, real_score=real_score)
+
+    def check_sequence(
+        self,
+        frames: list[tuple[np.ndarray, tuple[int, int, int, int]]],
+    ) -> LivenessResult:
+        """Evaluate each frame and reject a static repeated presentation."""
+        if not frames:
+            raise ValueError("At least one frame is required")
+        results = [self.check(image, bbox) for image, bbox in frames]
+        crops = [self._crop(image, bbox, 2.7) for image, bbox in frames]
+        deltas = [
+            float(np.mean(cv2.absdiff(crops[i], crops[i - 1])) / 255.0)
+            for i in range(1, len(crops))
+        ]
+        temporal_delta = float(np.mean(deltas)) if deltas else 0.0
+        real_score = min(result.real_score for result in results)
+        is_real = all(result.is_real for result in results)
+        if len(frames) > 1 and temporal_delta < self._min_temporal_delta:
+            is_real = False
+        return LivenessResult(
+            is_real=is_real,
+            real_score=real_score,
+            frame_count=len(frames),
+            temporal_delta=temporal_delta,
+        )
 
     @staticmethod
     def _crop(image: np.ndarray, bbox_xywh: tuple[int, int, int, int], scale: float) -> np.ndarray:

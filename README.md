@@ -33,7 +33,8 @@ tự làm alignment qua landmark trước khi sinh embedding) → `EmbeddingServ
 ghi embedding + ảnh (nếu bật `STORE_ORIGINAL_IMAGE`) thẳng vào Odoo qua
 `OdooService`, đồng thời cập nhật cache RAM.
 
-**Luồng /verify**: decode ảnh → sinh embedding → so cosine similarity với
+**Luồng /verify**: decode chuỗi 3 frame camera → kiểm tra liveness trên từng
+frame + độ thay đổi theo thời gian → sinh embedding → so cosine similarity với
 cache RAM (nạp từ Odoo lúc khởi động) → nếu điểm cao nhất ≥
 `FACE_MATCH_THRESHOLD` thì gọi `OdooService` để tạo/đóng bản ghi
 `hr.attendance` (tự động toggle check-in/check-out dựa trên bản ghi đang mở
