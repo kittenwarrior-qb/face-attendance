@@ -9,3 +9,11 @@ services:
   api:
     ports:
       - "8000:8000"
+    networks:
+      - default
+      - satori_erp
+
+networks:
+  satori_erp:
+    external: true
+    name: satori_erp_default
