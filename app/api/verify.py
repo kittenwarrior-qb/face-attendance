@@ -102,12 +102,13 @@ async def verify_face(
     except OdooServiceError as exc:
         logger.error("Verified employee_id=%s but Odoo attendance failed: %s", match.employee_id, exc)
         return VerifyResponse(
-            success=True,
+            success=False,
+            code="AttendanceServiceError",
             employee_id=match.employee_id,
             employee_name=match.employee_name,
             avatar_data_url=avatar_data_url,
             score=match.score,
-            message=f"Face verified but attendance was not recorded: {exc}",
+            message="Đã nhận diện khuôn mặt nhưng không thể ghi nhận chấm công. Vui lòng liên hệ HCNS.",
         )
 
     return VerifyResponse(
