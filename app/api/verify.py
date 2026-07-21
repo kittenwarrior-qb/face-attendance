@@ -84,13 +84,20 @@ async def verify_face(
         )
     except OdooBusinessValidationError as exc:
         logger.info("Attendance rejected by Odoo for employee_id=%s: %s", match.employee_id, exc)
+        error_text = str(exc)
+        face_scan_not_allowed = "chưa được cấp quyền chấm công bằng Face Scan" in error_text
         return VerifyResponse(
             success=False,
+            code="FaceScanNotAllowedError" if face_scan_not_allowed else "AttendanceRejectedError",
             employee_id=match.employee_id,
             employee_name=match.employee_name,
             avatar_data_url=avatar_data_url,
             score=match.score,
-            message="Face recognized but attendance is not permitted: %s" % exc,
+            message=(
+                "Nhân viên này chưa được cấp quyền chấm công bằng Face Scan. Vui lòng liên hệ HCNS."
+                if face_scan_not_allowed
+                else "Đã nhận diện khuôn mặt nhưng Odoo từ chối chấm công. Vui lòng liên hệ HCNS."
+            ),
         )
     except OdooServiceError as exc:
         logger.error("Verified employee_id=%s but Odoo attendance failed: %s", match.employee_id, exc)

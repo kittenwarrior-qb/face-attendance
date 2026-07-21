@@ -15,12 +15,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-
 # Pre-download the buffalo_l model pack at build time so the first request
 # doesn't pay the download cost. Safe to fail here (e.g. offline build) -
 # the model will then be downloaded lazily on first startup instead.
 RUN python -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']).prepare(ctx_id=-1)" || true
+
+# App code changes frequently; copy it after the large, stable model layer so
+# normal rebuilds do not download and export the model pack again.
+COPY app ./app
 
 EXPOSE 8000
 

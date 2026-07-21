@@ -25,6 +25,7 @@ class AttendanceResult(BaseModel):
 
 class VerifyResponse(BaseModel):
     success: bool
+    code: str | None = None
     employee_id: str | None = None
     employee_name: str | None = None
     avatar_data_url: str | None = None
