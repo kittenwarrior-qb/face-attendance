@@ -63,13 +63,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-if settings.cors_allowed_origins_list:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_allowed_origins_list,
-        allow_methods=["POST"],
-        allow_headers=["*"],
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allowed_origins_list or ["*"],
+    allow_methods=["POST"],
+    allow_headers=["*"],
+)
 
 app.include_router(health.router)
 app.include_router(register.router)
