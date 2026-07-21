@@ -60,6 +60,16 @@ async def verify_face(
         logger.info("Verification failed: no match above threshold %.3f", settings.face_match_threshold)
         return VerifyResponse(success=False, message="Face not recognized")
 
+    avatar_data_url = None
+    try:
+        avatar = odoo_service.get_employee_avatar(match.employee_id)
+        if avatar:
+            avatar_data_url = f"data:image/jpeg;base64,{avatar}"
+    except OdooServiceError as exc:
+        # Avatar is a confirmation aid; it must not make an otherwise valid
+        # attendance scan fail when the image field is unavailable.
+        logger.warning("Could not load avatar for employee_id=%s: %s", match.employee_id, exc)
+
     gps = GPSPoint(latitude=latitude, longitude=longitude) if latitude is not None and longitude is not None else None
 
     image_bytes = encode_image_to_jpeg(image) if settings.odoo_attach_image else None
@@ -78,6 +88,7 @@ async def verify_face(
             success=False,
             employee_id=match.employee_id,
             employee_name=match.employee_name,
+            avatar_data_url=avatar_data_url,
             score=match.score,
             message="Face recognized but attendance is not permitted: %s" % exc,
         )
@@ -87,6 +98,7 @@ async def verify_face(
             success=True,
             employee_id=match.employee_id,
             employee_name=match.employee_name,
+            avatar_data_url=avatar_data_url,
             score=match.score,
             message=f"Face verified but attendance was not recorded: {exc}",
         )
@@ -95,6 +107,7 @@ async def verify_face(
         success=True,
         employee_id=match.employee_id,
         employee_name=match.employee_name,
+        avatar_data_url=avatar_data_url,
         score=match.score,
         attendance=AttendanceResult(
             action=attendance.action,

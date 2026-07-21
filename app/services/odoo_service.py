@@ -159,6 +159,16 @@ class OdooService:
             )
         return name
 
+    def get_employee_avatar(self, employee_id: str) -> str | None:
+        """Return the registered employee image as base64, if Odoo has one."""
+        odoo_id = self._resolve_odoo_employee_id(employee_id)
+        result = self._execute(
+            "hr.employee", "read", [odoo_id], kwargs={"fields": ["image_1920"]}
+        )
+        if not result:
+            return None
+        return result[0].get("image_1920") or None
+
     def _upsert_attachment(self, res_id: int, data: bytes) -> None:
         existing = self._execute(
             "ir.attachment",

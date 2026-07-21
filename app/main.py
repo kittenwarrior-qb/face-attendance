@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import health, register, ui, verify
+from app.api import health, register, track, ui, verify
 from app.config import get_settings
 from app.services.embedding_service import EmbeddingService
 from app.services.face_service import FaceService
@@ -74,6 +74,7 @@ if settings.cors_allowed_origins_list:
 app.include_router(health.router)
 app.include_router(register.router)
 app.include_router(verify.router)
+app.include_router(track.router)
 app.include_router(ui.router)
 
 

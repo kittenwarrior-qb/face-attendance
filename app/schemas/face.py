@@ -27,9 +27,15 @@ class VerifyResponse(BaseModel):
     success: bool
     employee_id: str | None = None
     employee_name: str | None = None
+    avatar_data_url: str | None = None
     score: float | None = Field(default=None, description="Cosine similarity score in [-1, 1]")
     attendance: AttendanceResult | None = None
     message: str | None = None
+
+
+class TrackResponse(BaseModel):
+    success: bool
+    bbox: list[int]
 
 
 class ErrorResponse(BaseModel):
