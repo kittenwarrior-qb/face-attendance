@@ -17,7 +17,7 @@ class GPSPoint(BaseModel):
 
 
 class AttendanceResult(BaseModel):
-    action: Literal["check_in", "check_out"]
+    action: Literal["check_in", "check_out", "ignored"]
     odoo_attendance_id: int
     timestamp: datetime
     gps: GPSPoint | None = None

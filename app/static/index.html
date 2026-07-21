@@ -467,7 +467,9 @@ function showResult(ok, data) {
   }
   resultScore.textContent = data.score != null ? ('Độ tương đồng: ' + data.score.toFixed(3)) : '';
   if (data.attendance) {
-    const action = data.attendance.action === 'check_in' ? 'Check-in' : 'Check-out';
+    const action = data.attendance.action === 'check_in'
+      ? 'Check-in'
+      : (data.attendance.action === 'check_out' ? 'Check-out' : 'Đã ghi nhận trước đó');
     resultAttendance.textContent = action + ' lúc ' + new Date(data.attendance.timestamp).toLocaleTimeString('vi-VN');
   } else {
     resultAttendance.textContent = '';

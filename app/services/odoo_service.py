@@ -3,7 +3,7 @@ import http.client
 import json
 import xmlrpc.client
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import numpy as np
@@ -23,19 +23,6 @@ FACE_EMBEDDING_ATTACHMENT_NAME = "face_embedding.json"
 # RPC_FAULT_CODE_WARNING. Any other code (typically 1) is a technical/internal
 # error, not a business rule, and should not be blindly retried.
 _RPC_FAULT_CODE_WARNING = 2
-
-# Distinguishes this service's punches from Odoo's own kiosk/systray/manual
-# flows in hr.attendance.in_mode/out_mode (added via selection_add in the
-# satori_face_attendance Odoo module).
-_ATTENDANCE_MODE = "face_scan"
-
-# A face-scan check-in left un-closed counts as an active session only for this
-# many hours. Beyond that we assume the employee forgot to check out.
-_MAX_OPEN_SESSION_HOURS = 16
-# When capping such a forgotten session, assume a standard shift length rather
-# than the raw (possibly multi-day) gap to the next scan.
-_ASSUMED_SHIFT_HOURS = 8
-
 
 class _TimeoutTransport(xmlrpc.client.Transport):
     """xmlrpc.client.Transport with a socket-level timeout.
@@ -58,7 +45,7 @@ class _TimeoutTransport(xmlrpc.client.Transport):
 
 @dataclass
 class AttendanceRecord:
-    action: Literal["check_in", "check_out"]
+    action: Literal["check_in", "check_out", "ignored"]
     odoo_attendance_id: int
     timestamp: datetime
 
@@ -236,146 +223,36 @@ class OdooService:
         latitude: float | None = None,
         longitude: float | None = None,
         image_bytes: bytes | None = None,
-        _retry_on_conflict: bool = True,
     ) -> AttendanceRecord:
-        """Toggle attendance: close the open check-in if one exists, else create a new check-in.
-
-        The check-in/out photo is written directly onto a dedicated hr.attendance
-        field (face_checkin_photo/face_checkout_photo - added by the
-        satori_face_attendance Odoo module) rather than as a loose ir.attachment,
-        so it renders properly in the attendance form instead of floating
-        unattached. If that module isn't installed yet, the field is dropped and
-        the base record is still created.
-
-        Odoo's own hr.attendance also has native kiosk/systray/manual check-in
-        flows, which independently read-then-write the same "is there an open
-        attendance" state this method does - two systems can race between the
-        read and the write. `in_mode`/`out_mode` are tagged "face_scan" so this
-        source is distinguishable from Odoo's own flows in the attendance list.
-        If Odoo's own overlap validation rejects the write (meaning some other
-        source won the race), this re-reads the now-current state and retries
-        the toggle exactly once instead of surfacing a raw error.
-        """
-        odoo_employee_id = self._resolve_odoo_employee_id(employee_id)
-        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-
-        open_id = self._open_attendance_to_close(odoo_employee_id, timestamp)
-
-        try:
-            if open_id is not None:
-                attendance_id = open_id
-                vals: dict[str, Any] = {"check_out": ts_str, "out_mode": _ATTENDANCE_MODE}
-                if latitude is not None and longitude is not None:
-                    vals.update({"out_latitude": latitude, "out_longitude": longitude})
-                if image_bytes is not None:
-                    vals["face_checkout_photo"] = base64.b64encode(image_bytes).decode("ascii")
-                self._write_with_field_fallback(attendance_id, vals)
-                action: Literal["check_in", "check_out"] = "check_out"
-            else:
-                vals = {"employee_id": odoo_employee_id, "check_in": ts_str, "in_mode": _ATTENDANCE_MODE}
-                if latitude is not None and longitude is not None:
-                    vals.update({"in_latitude": latitude, "in_longitude": longitude})
-                if image_bytes is not None:
-                    vals["face_checkin_photo"] = base64.b64encode(image_bytes).decode("ascii")
-                attendance_id = self._create_with_field_fallback(vals)
-                action = "check_in"
-        except OdooBusinessValidationError:
-            if not _retry_on_conflict:
-                raise
-            logger.warning(
-                "Odoo rejected the attendance write for employee_id=%s (likely raced with another "
-                "check-in source, e.g. kiosk/systray) - re-checking current state and retrying once",
-                employee_id,
-            )
-            return self.create_attendance(
-                employee_id, timestamp, latitude, longitude, image_bytes, _retry_on_conflict=False
-            )
-
-        logger.info("Odoo %s recorded for employee_id=%s (attendance_id=%s)", action, employee_id, attendance_id)
-        return AttendanceRecord(action=action, odoo_attendance_id=attendance_id, timestamp=timestamp)
-
-    def _open_attendance_to_close(self, odoo_employee_id: int, timestamp: datetime) -> int | None:
-        """Decide whether this scan closes an in-progress session or starts a
-        new check-in.
-
-        Returns the id of an open (check_out == False) attendance that should be
-        closed by this scan, or None if this scan should open a fresh check-in.
-
-        A record whose check_in is within `_MAX_OPEN_SESSION_HOURS` of now is a
-        genuine in-progress session -> return it (this scan is the check-out).
-        If the only open record(s) are older than that, the employee almost
-        certainly forgot to check out: each stale record is capped at a nominal
-        shift length (so it stops being an open, ever-growing session) and None
-        is returned so this scan opens a new check-in. Without this, tomorrow's
-        check-in would be silently recorded as yesterday's check-out, producing
-        multi-day `worked_hours` records.
-        """
-        open_records = self._execute(
-            "hr.attendance",
-            "search_read",
-            [["employee_id", "=", odoo_employee_id], ["check_out", "=", False]],
-            kwargs={"fields": ["id", "check_in"], "order": "check_in desc"},
+        """Gửi một raw punch vào Odoo để ghép chung với dữ liệu ZKTeco theo ca."""
+        timestamp_utc = (
+            timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+            if timestamp.tzinfo
+            else timestamp
         )
-        if not open_records:
-            return None
-
-        now_naive = timestamp.astimezone(timezone.utc).replace(tzinfo=None) if timestamp.tzinfo else timestamp
-        newest = open_records[0]
-        newest_check_in = datetime.strptime(newest["check_in"], "%Y-%m-%d %H:%M:%S")
-        if now_naive - newest_check_in <= timedelta(hours=_MAX_OPEN_SESSION_HOURS):
-            return newest["id"]
-
-        # Every open record is stale (newest is, so any older one is too): cap
-        # each at a standard shift so none stays open, then start a new check-in.
-        for record in open_records:
-            check_in = datetime.strptime(record["check_in"], "%Y-%m-%d %H:%M:%S")
-            capped = (check_in + timedelta(hours=_ASSUMED_SHIFT_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-            self._write_with_field_fallback(record["id"], {"check_out": capped, "out_mode": _ATTENDANCE_MODE})
-            logger.warning(
-                "Auto-closed stale open attendance %s (check_in=%s) at +%dh; a new check-in will be created",
-                record["id"], record["check_in"], _ASSUMED_SHIFT_HOURS,
+        result = self._execute(
+            "satori.attendance.webhook.log",
+            "satori_ingest_face_punch",
+            employee_id,
+            timestamp_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            latitude if latitude is not None else False,
+            longitude if longitude is not None else False,
+            base64.b64encode(image_bytes).decode("ascii") if image_bytes else False,
+        )
+        attendance_id = result.get("attendance_id")
+        if not attendance_id:
+            raise OdooServiceError(
+                "Odoo kept the raw Face Scan log but could not assign it to a work-shift window"
             )
-        return None
-
-    def _write_with_field_fallback(self, attendance_id: int, vals: dict[str, Any]) -> None:
-        try:
-            self._execute("hr.attendance", "write", [attendance_id], vals)
-        except OdooServiceError as exc:
-            if self._is_unknown_field_error(exc) and self._strip_optional_fields(vals):
-                logger.warning("Some optional fields not available on hr.attendance, retrying without them")
-                self._execute("hr.attendance", "write", [attendance_id], vals)
-            else:
-                raise
-
-    def _create_with_field_fallback(self, vals: dict[str, Any]) -> int:
-        try:
-            return self._execute("hr.attendance", "create", vals)
-        except OdooServiceError as exc:
-            if self._is_unknown_field_error(exc) and self._strip_optional_fields(vals):
-                logger.warning("Some optional fields not available on hr.attendance, retrying without them")
-                return self._execute("hr.attendance", "create", vals)
-            raise
-
-    @staticmethod
-    def _is_unknown_field_error(exc: OdooServiceError) -> bool:
-        message = str(exc).lower()
-        return "invalid field" in message or "unknown field" in message
-
-    @staticmethod
-    def _strip_optional_fields(vals: dict[str, Any]) -> bool:
-        """Drop fields that may not exist on hr.attendance in this Odoo (GPS
-        columns from satori_attendance, photo columns from
-        satori_face_attendance) so the base check-in/out still succeeds."""
-        optional_keys = [
-            "in_latitude",
-            "in_longitude",
-            "out_latitude",
-            "out_longitude",
-            "face_checkin_photo",
-            "face_checkout_photo",
-        ]
-        removed = False
-        for key in optional_keys:
-            if vals.pop(key, None) is not None:
-                removed = True
-        return removed
+        action = result.get("action", "ignored")
+        logger.info(
+            "Odoo %s recorded for employee_id=%s (attendance_id=%s)",
+            action,
+            employee_id,
+            attendance_id,
+        )
+        return AttendanceRecord(
+            action=action,
+            odoo_attendance_id=attendance_id,
+            timestamp=timestamp,
+        )
