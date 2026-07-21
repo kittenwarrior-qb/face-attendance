@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import health, register, track, ui, verify
 from app.config import get_settings
@@ -75,6 +77,7 @@ app.include_router(register.router)
 app.include_router(verify.router)
 app.include_router(track.router)
 app.include_router(ui.router)
+app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="static")
 
 
 @app.exception_handler(FaceAttendanceError)

@@ -441,12 +441,16 @@ async function captureSequence(count = 3, intervalMs = 220) {
   return frames;
 }
 
+// Pre-recorded "Xin cảm ơn" clip (Google TTS) - a bundled audio file plays
+// identically on every device, unlike speechSynthesis whose available voices
+// (and whether a Vietnamese one exists at all) vary wildly by browser/OS.
+const thanksAudio = new Audio('/static/audio/xin_cam_on.mp3');
+
 function speakThanks() {
   try {
-    const utter = new SpeechSynthesisUtterance('Xin cảm ơn');
-    utter.lang = 'vi-VN';
-    speechSynthesis.speak(utter);
-  } catch (e) { /* Speech API unavailable - non-critical, fail silently */ }
+    thanksAudio.currentTime = 0;
+    thanksAudio.play().catch(() => { /* autoplay blocked - non-critical */ });
+  } catch (e) { /* non-critical, fail silently */ }
 }
 
 function tryGetGPS() {
