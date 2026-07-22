@@ -67,6 +67,27 @@
   .btn.small { padding: 4px 10px; font-size: 12px; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .row-actions { display: flex; gap: 6px; }
+  .avatar-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #0f1115;
+    border: 1px solid var(--border);
+    display: block;
+  }
+  .avatar-placeholder {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #0f1115;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--muted);
+  }
 
   .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
   .field { display: flex; flex-direction: column; gap: 4px; }
@@ -129,6 +150,7 @@
       <table id="employeeTable">
         <thead>
           <tr>
+            <th>Ảnh</th>
             <th>Mã NV</th>
             <th>Tên</th>
             <th>Phòng ban</th>
@@ -182,6 +204,36 @@ function modeLabel(mode) {
   return { off: 'Tắt', warn: 'Cảnh báo (không chặn)', enforce: 'Chặn giả mạo' }[mode] || mode;
 }
 
+// <img src> can't send custom headers, so avatars are fetched with the API
+// key and swapped in as blob URLs once loaded (silently left as a placeholder
+// if the employee has none, or the request fails).
+const avatarUrlCache = new Map();
+function applyAvatar(slotEl, url) {
+  const img = document.createElement('img');
+  img.className = 'avatar-thumb';
+  img.src = url;
+  img.alt = '';
+  slotEl.replaceWith(img);
+}
+async function loadAvatarInto(slotEl, employeeId) {
+  if (avatarUrlCache.has(employeeId)) {
+    applyAvatar(slotEl, avatarUrlCache.get(employeeId));
+    return;
+  }
+  try {
+    const res = await fetch(`/admin/employees/${encodeURIComponent(employeeId)}/avatar`, {
+      headers: { 'X-API-Key': apiKey },
+    });
+    if (!res.ok) return; // no avatar on file - leave the initial-letter placeholder
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    avatarUrlCache.set(employeeId, url);
+    applyAvatar(slotEl, url);
+  } catch {
+    // Non-critical - the placeholder icon stays.
+  }
+}
+
 async function loadEmployees() {
   const res = await fetch('/admin/employees', { headers: { 'X-API-Key': apiKey } });
   if (!res.ok) {
@@ -206,8 +258,12 @@ async function loadEmployees() {
   } else {
     emptyState.style.display = 'none';
     for (const emp of data.employees) {
+      const initial = (emp.employee_name || '?').trim().slice(0, 1).toUpperCase();
       const tr = document.createElement('tr');
       tr.innerHTML = `
+        <td>
+          <div class="avatar-placeholder" data-avatar-slot="${emp.employee_id}">${initial}</div>
+        </td>
         <td>${emp.employee_id}</td>
         <td>${emp.employee_name}</td>
         <td>${emp.department || '—'}</td>
@@ -219,6 +275,9 @@ async function loadEmployees() {
       `;
       tbody.appendChild(tr);
     }
+    tbody.querySelectorAll('[data-avatar-slot]').forEach(slot => {
+      loadAvatarInto(slot, slot.dataset.avatarSlot);
+    });
     tbody.querySelectorAll('[data-edit]').forEach(btn => {
       btn.addEventListener('click', () => {
         document.getElementById('formBarcode').value = btn.dataset.edit;

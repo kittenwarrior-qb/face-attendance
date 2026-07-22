@@ -151,15 +151,18 @@ class OdooService:
             )
         return name
 
-    def get_employee_avatar(self, employee_id: str) -> str | None:
-        """Return the registered employee image as base64, if Odoo has one."""
+    def get_employee_avatar(self, employee_id: str, field: str = "image_1920") -> str | None:
+        """Return the registered employee image as base64, if Odoo has one.
+
+        `field` picks one of Odoo's auto-resized variants - the full-size
+        image_1920 (used for the post-scan confirmation avatar) or a small one
+        like image_128 (cheap thumbnail for the admin employee list).
+        """
         odoo_id = self._resolve_odoo_employee_id(employee_id)
-        result = self._execute(
-            "hr.employee", "read", [odoo_id], kwargs={"fields": ["image_1920"]}
-        )
+        result = self._execute("hr.employee", "read", [odoo_id], kwargs={"fields": [field]})
         if not result:
             return None
-        return result[0].get("image_1920") or None
+        return result[0].get(field) or None
 
     def _upsert_attachment(self, res_id: int, data: bytes) -> None:
         existing = self._execute(

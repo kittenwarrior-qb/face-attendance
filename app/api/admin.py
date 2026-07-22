@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends
+import base64
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 
 from app.api.deps import get_embedding_service, get_odoo_service, verify_register_api_key
 from app.config import Settings, get_settings
 from app.schemas.face import AdminEmployeesResponse, RegisteredEmployee
 from app.services.embedding_service import EmbeddingService
 from app.services.odoo_service import OdooService
+from app.utils.exceptions import OdooServiceError
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -29,6 +33,23 @@ async def list_employees(
         total_registered=len(employees),
         employees=employees,
     )
+
+
+@router.get("/employees/{employee_id}/avatar")
+async def get_employee_avatar(
+    employee_id: str,
+    odoo_service: OdooService = Depends(get_odoo_service),
+) -> Response:
+    """Small thumbnail (Odoo's auto-resized image_128) for the admin table."""
+    try:
+        avatar_b64 = odoo_service.get_employee_avatar(employee_id, field="image_128")
+    except OdooServiceError:
+        # Barcode doesn't resolve to any hr.employee - same "nothing to show"
+        # outcome from the admin table's point of view as a missing avatar.
+        avatar_b64 = None
+    if not avatar_b64:
+        raise HTTPException(status_code=404, detail="No avatar on file for this employee")
+    return Response(content=base64.b64decode(avatar_b64), media_type="image/jpeg")
 
 
 @router.delete("/employees/{employee_id}")
