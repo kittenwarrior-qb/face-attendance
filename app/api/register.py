@@ -76,9 +76,8 @@ async def register_face_from_odoo_avatar(
 @router.post("/register/remove", dependencies=[Depends(verify_register_api_key)])
 async def remove_registered_face(
     employee_id: str = Form(..., description="Previously registered employee barcode"),
-    odoo_employee_id: int = Form(..., description="Numeric Odoo hr.employee ID"),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
 ) -> dict[str, bool]:
-    embedding_service.unregister(employee_id, odoo_employee_id)
+    embedding_service.unregister(employee_id)
     logger.info("Removed face registration for employee_id=%s", employee_id)
     return {"success": True}

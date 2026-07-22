@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import health, register, track, ui, verify
+from app.api import admin, health, register, track, ui, verify
 from app.config import get_settings
 from app.services.embedding_service import EmbeddingService
 from app.services.face_service import FaceService
@@ -76,6 +76,7 @@ app.include_router(health.router)
 app.include_router(register.router)
 app.include_router(verify.router)
 app.include_router(track.router)
+app.include_router(admin.router)
 app.include_router(ui.router)
 app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="static")
 

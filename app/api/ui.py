@@ -11,3 +11,8 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 @router.get("/")
 def kiosk_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@router.get("/admin")
+def admin_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "admin.html")

@@ -50,7 +50,8 @@ class EmbeddingService:
         self._cache[employee_id] = (embedding, name)
         return name
 
-    def unregister(self, employee_id: str, odoo_employee_id: int) -> None:
+    def unregister(self, employee_id: str) -> None:
+        odoo_employee_id = self._odoo_service.resolve_odoo_id(employee_id)
         self._odoo_service.delete_face(odoo_employee_id)
         self._cache.pop(employee_id, None)
 

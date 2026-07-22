@@ -130,6 +130,11 @@ class OdooService:
     def _resolve_odoo_employee_id(self, barcode: str) -> int:
         return self._resolve_odoo_employee(barcode)[0]
 
+    def resolve_odoo_id(self, employee_id: str) -> int:
+        """Public wrapper so other services (e.g. EmbeddingService.unregister)
+        can resolve a barcode without reaching into a private method."""
+        return self._resolve_odoo_employee_id(employee_id)
+
     def save_face(self, employee_id: str, embedding: np.ndarray, image_bytes: bytes | None = None) -> str:
         """Store the embedding (as a JSON ir.attachment) and optionally the photo
         (in hr.employee.image_1920) for this employee. Odoo is the only place
@@ -192,6 +197,49 @@ class OdooService:
         )
         if attachments:
             self._execute("ir.attachment", "unlink", attachments)
+
+    def list_registered_employees(self) -> list[dict[str, Any]]:
+        """Every employee with a registered face embedding, plus display fields
+        (department, when the registration was last updated) for the admin
+        page - a lighter cousin of load_all_faces() that skips decoding the
+        actual embedding vectors, which the UI has no use for.
+        """
+        employees = self._execute(
+            "hr.employee",
+            "search_read",
+            [["barcode", "!=", False]],
+            kwargs={"fields": ["id", "barcode", "name", "department_id"]},
+        )
+        id_to_employee = {emp["id"]: emp for emp in employees}
+        if not id_to_employee:
+            return []
+
+        attachments = self._execute(
+            "ir.attachment",
+            "search_read",
+            [
+                ["res_model", "=", "hr.employee"],
+                ["res_id", "in", list(id_to_employee.keys())],
+                ["name", "=", FACE_EMBEDDING_ATTACHMENT_NAME],
+            ],
+            kwargs={"fields": ["res_id", "write_date"]},
+        )
+
+        result = []
+        for attachment in attachments:
+            employee = id_to_employee.get(attachment["res_id"])
+            if not employee:
+                continue
+            department = employee.get("department_id")
+            result.append(
+                {
+                    "employee_id": employee["barcode"],
+                    "employee_name": employee["name"],
+                    "department": department[1] if department else None,
+                    "updated_at": attachment.get("write_date") or None,
+                }
+            )
+        return result
 
     def load_all_faces(self) -> dict[str, tuple[np.ndarray, str]]:
         """Fetch every registered embedding (+ employee name) from Odoo in two

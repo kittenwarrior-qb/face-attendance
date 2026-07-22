@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quản lý nhân viên — Face Attendance</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8eaed;
+    --muted: #8b909c;
+    --accent: #4f8cff;
+    --ok: #2ecc71;
+    --err: #e74c3c;
+    --warn: #f5a623;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 16px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 20px; margin: 4px 0; }
+  a.back { color: var(--muted); font-size: 13px; text-decoration: none; }
+  a.back:hover { color: var(--text); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .status-item .label { font-size: 12px; color: var(--muted); }
+  .status-item .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .value.mode-off { color: var(--muted); }
+  .value.mode-warn { color: var(--warn); }
+  .value.mode-enforce { color: var(--ok); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .table-wrap { overflow-x: auto; }
+  .btn {
+    appearance: none;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #fff;
+    background: var(--accent);
+  }
+  .btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn.danger { background: var(--err); }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .row-actions { display: flex; gap: 6px; }
+
+  .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  input[type=text], input[type=password], input[type=file] {
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0f1115;
+    color: var(--text);
+    font-size: 13px;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .msg { font-size: 13px; margin-top: 8px; min-height: 1.2em; }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--err); }
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+  #apiKeyGate { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin: 60px auto; }
+  #appBody { display: none; }
+</style>
+</head>
+<body>
+
+<div id="apiKeyGate" class="card">
+  <h1>🔐 Quản lý nhân viên</h1>
+  <p class="hint">Nhập X-API-Key (REGISTER_API_KEY của server) để tiếp tục. Key chỉ lưu tạm trong tab này.</p>
+  <input type="password" id="apiKeyInput" placeholder="X-API-Key">
+  <button class="btn" id="apiKeyGoBtn">Vào trang quản lý</button>
+  <div class="msg err" id="apiKeyMsg"></div>
+</div>
+
+<div class="wrap" id="appBody">
+  <div>
+    <a class="back" href="/">← Về trang chấm công</a>
+    <h1>👥 Quản lý nhân viên đã đăng ký khuôn mặt</h1>
+  </div>
+
+  <div class="card">
+    <div class="status-grid" id="statusGrid"></div>
+  </div>
+
+  <div class="card">
+    <div class="form-row">
+      <div class="field">
+        <label for="formBarcode">Mã nhân viên (barcode Odoo)</label>
+        <input type="text" id="formBarcode" placeholder="VD: SA0625" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="formPhoto">Ảnh khuôn mặt (1 người, rõ mặt)</label>
+        <input type="file" id="formPhoto" accept="image/*">
+      </div>
+      <button class="btn" id="formSubmitBtn">➕ Thêm / Cập nhật</button>
+    </div>
+    <div class="hint">Sửa = nhập lại đúng mã nhân viên đang có sẵn kèm ảnh mới, hệ thống tự ghi đè.</div>
+    <div class="msg" id="formMsg"></div>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table id="employeeTable">
+        <thead>
+          <tr>
+            <th>Mã NV</th>
+            <th>Tên</th>
+            <th>Phòng ban</th>
+            <th>Cập nhật lần cuối</th>
+            <th>Hành động</th>
+          </tr>
+        </thead>
+        <tbody id="employeeTbody"></tbody>
+      </table>
+      <div class="empty" id="emptyState" style="display:none">Chưa có nhân viên nào đăng ký khuôn mặt.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let apiKey = sessionStorage.getItem('faceAdminApiKey') || '';
+
+const gate = document.getElementById('apiKeyGate');
+const appBody = document.getElementById('appBody');
+const apiKeyInput = document.getElementById('apiKeyInput');
+const apiKeyMsg = document.getElementById('apiKeyMsg');
+
+async function tryEnter(key) {
+  const res = await fetch('/admin/employees', { headers: { 'X-API-Key': key } });
+  if (res.ok) {
+    apiKey = key;
+    sessionStorage.setItem('faceAdminApiKey', key);
+    gate.style.display = 'none';
+    appBody.style.display = 'flex';
+    loadEmployees();
+    return true;
+  }
+  return false;
+}
+
+document.getElementById('apiKeyGoBtn').addEventListener('click', async () => {
+  const key = apiKeyInput.value.trim();
+  apiKeyMsg.textContent = 'Đang kiểm tra...';
+  const ok = await tryEnter(key);
+  if (!ok) apiKeyMsg.textContent = '❌ Sai API key hoặc không kết nối được server.';
+});
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  // Backend Datetime strings are UTC without a timezone suffix.
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  return d.toLocaleString('vi-VN');
+}
+
+function modeLabel(mode) {
+  return { off: 'Tắt', warn: 'Cảnh báo (không chặn)', enforce: 'Chặn giả mạo' }[mode] || mode;
+}
+
+async function loadEmployees() {
+  const res = await fetch('/admin/employees', { headers: { 'X-API-Key': apiKey } });
+  if (!res.ok) {
+    if (res.status === 401) { sessionStorage.removeItem('faceAdminApiKey'); location.reload(); }
+    return;
+  }
+  const data = await res.json();
+
+  const statusGrid = document.getElementById('statusGrid');
+  statusGrid.innerHTML = `
+    <div class="status-item"><div class="label">Tổng số đã đăng ký</div><div class="value">${data.total_registered}</div></div>
+    <div class="status-item"><div class="label">Chống giả mạo (liveness)</div><div class="value mode-${data.liveness_mode}">${modeLabel(data.liveness_mode)}</div></div>
+    <div class="status-item"><div class="label">Ngưỡng điểm thật</div><div class="value">${data.liveness_threshold}</div></div>
+    <div class="status-item"><div class="label">Yêu cầu đa khung hình</div><div class="value">${data.liveness_require_sequence ? `Có (tối thiểu ${data.liveness_min_frames})` : 'Không'}</div></div>
+  `;
+
+  const tbody = document.getElementById('employeeTbody');
+  const emptyState = document.getElementById('emptyState');
+  tbody.innerHTML = '';
+  if (!data.employees.length) {
+    emptyState.style.display = 'block';
+  } else {
+    emptyState.style.display = 'none';
+    for (const emp of data.employees) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${emp.employee_id}</td>
+        <td>${emp.employee_name}</td>
+        <td>${emp.department || '—'}</td>
+        <td>${fmtDate(emp.updated_at)}</td>
+        <td class="row-actions">
+          <button class="btn secondary small" data-edit="${emp.employee_id}">✏️ Sửa</button>
+          <button class="btn danger small" data-delete="${emp.employee_id}">🗑️ Xóa</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+    tbody.querySelectorAll('[data-edit]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('formBarcode').value = btn.dataset.edit;
+        document.getElementById('formPhoto').focus();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    tbody.querySelectorAll('[data-delete]').forEach(btn => {
+      btn.addEventListener('click', () => deleteEmployee(btn.dataset.delete));
+    });
+  }
+}
+
+async function deleteEmployee(employeeId) {
+  if (!confirm(`Xóa đăng ký khuôn mặt của mã "${employeeId}"? Nhân viên này sẽ không chấm công bằng khuôn mặt được nữa cho tới khi đăng ký lại.`)) return;
+  const res = await fetch(`/admin/employees/${encodeURIComponent(employeeId)}`, {
+    method: 'DELETE',
+    headers: { 'X-API-Key': apiKey },
+  });
+  if (res.ok) {
+    loadEmployees();
+  } else {
+    alert('Xóa thất bại — kiểm tra lại kết nối server.');
+  }
+}
+
+const formMsg = document.getElementById('formMsg');
+document.getElementById('formSubmitBtn').addEventListener('click', async () => {
+  const barcode = document.getElementById('formBarcode').value.trim();
+  const fileInput = document.getElementById('formPhoto');
+  const file = fileInput.files[0];
+  if (!barcode) { formMsg.className = 'msg err'; formMsg.textContent = 'Nhập mã nhân viên trước đã.'; return; }
+  if (!file) { formMsg.className = 'msg err'; formMsg.textContent = 'Chọn 1 ảnh khuôn mặt trước đã.'; return; }
+
+  formMsg.className = 'msg';
+  formMsg.textContent = 'Đang xử lý...';
+  const form = new FormData();
+  form.append('employee_id', barcode);
+  form.append('file', file);
+  try {
+    const res = await fetch('/register', { method: 'POST', headers: { 'X-API-Key': apiKey }, body: form });
+    const data = await res.json();
+    if (data.success) {
+      formMsg.className = 'msg ok';
+      formMsg.textContent = `✅ Đã đăng ký: ${data.employee_name} (#${data.employee_id})`;
+      document.getElementById('formBarcode').value = '';
+      fileInput.value = '';
+      loadEmployees();
+    } else {
+      formMsg.className = 'msg err';
+      formMsg.textContent = '❌ ' + (data.detail || data.message || 'Đăng ký thất bại');
+    }
+  } catch (e) {
+    formMsg.className = 'msg err';
+    formMsg.textContent = '❌ Lỗi kết nối: ' + e.message;
+  }
+});
+
+if (apiKey) {
+  tryEnter(apiKey).then(ok => { if (!ok) { sessionStorage.removeItem('faceAdminApiKey'); } });
+} else {
+  gate.style.display = 'flex';
+}
+</script>
+</body>
+</html>

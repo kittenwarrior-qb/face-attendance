@@ -39,6 +39,23 @@ class TrackResponse(BaseModel):
     bbox: list[int]
 
 
+class RegisteredEmployee(BaseModel):
+    employee_id: str
+    employee_name: str
+    department: str | None = None
+    updated_at: datetime | None = None
+
+
+class AdminEmployeesResponse(BaseModel):
+    success: bool = True
+    liveness_mode: str
+    liveness_threshold: float
+    liveness_require_sequence: bool
+    liveness_min_frames: int
+    total_registered: int
+    employees: list[RegisteredEmployee]
+
+
 class ErrorResponse(BaseModel):
     success: bool = False
     detail: str
