@@ -22,6 +22,8 @@ async def verify_face(
     files: list[UploadFile] | None = File(None, description="Additional camera frames"),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
+    account_token: str = Form(..., description="Short-lived token issued by the logged-in Odoo account"),
+    expected_employee_id: str = Form(..., description="Employee barcode bound to the logged-in Odoo account"),
     face_service: FaceService = Depends(get_face_service),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     odoo_service: OdooService = Depends(get_odoo_service),
@@ -55,10 +57,30 @@ async def verify_face(
         else:
             logger.info("Liveness ok (real_score=%.3f)", liveness.real_score)
 
-    match = embedding_service.find_best_match(embedding)
+    match = embedding_service.find_employee_match(embedding, expected_employee_id)
     if match is None:
-        logger.info("Verification failed: no match above threshold %.3f", settings.face_match_threshold)
-        return VerifyResponse(success=False, message="Face not recognized")
+        registered = embedding_service.registered_employee(expected_employee_id)
+        if registered is None:
+            logger.warning("Verification blocked: no embedding for account employee=%s", expected_employee_id)
+            return VerifyResponse(
+                success=False,
+                code="FaceNotRegisteredError",
+                employee_id=expected_employee_id,
+                message="Tài khoản chưa có dữ liệu khuôn mặt. Vui lòng liên hệ HCNS đăng ký lại.",
+            )
+        logger.info(
+            "Verification failed for account employee=%s (threshold %.3f)",
+            expected_employee_id,
+            settings.face_match_threshold,
+        )
+        return VerifyResponse(
+            success=False,
+            code="AccountFaceMismatchError",
+            employee_id=registered.employee_id,
+            employee_name=registered.employee_name,
+            score=registered.score,
+            message="Khuôn mặt không khớp với tài khoản đang đăng nhập. Không thể chấm công cho người khác.",
+        )
 
     avatar_data_url = None
     try:
@@ -81,20 +103,36 @@ async def verify_face(
             latitude=latitude,
             longitude=longitude,
             image_bytes=image_bytes,
+            account_token=account_token,
         )
     except OdooBusinessValidationError as exc:
         logger.info("Attendance rejected by Odoo for employee_id=%s: %s", match.employee_id, exc)
         error_text = str(exc)
         face_scan_not_allowed = "chưa được cấp quyền chấm công bằng Face Scan" in error_text
+        account_face_mismatch = "Khuôn mặt không khớp với tài khoản" in error_text
+        account_token_error = "Phiên Face Scan" in error_text
+        error_code = (
+            "AccountFaceMismatchError"
+            if account_face_mismatch
+            else "AccountTokenError"
+            if account_token_error
+            else "FaceScanNotAllowedError"
+            if face_scan_not_allowed
+            else "AttendanceRejectedError"
+        )
         return VerifyResponse(
             success=False,
-            code="FaceScanNotAllowedError" if face_scan_not_allowed else "AttendanceRejectedError",
+            code=error_code,
             employee_id=match.employee_id,
             employee_name=match.employee_name,
             avatar_data_url=avatar_data_url,
             score=match.score,
             message=(
-                "Nhân viên này chưa được cấp quyền chấm công bằng Face Scan. Vui lòng liên hệ HCNS."
+                "Khuôn mặt không khớp với tài khoản đang đăng nhập. Không thể chấm công cho người khác."
+                if account_face_mismatch
+                else "Phiên chấm công không hợp lệ hoặc đã hết hạn. Vui lòng đóng và mở lại."
+                if account_token_error
+                else "Nhân viên này chưa được cấp quyền chấm công bằng Face Scan. Vui lòng liên hệ HCNS."
                 if face_scan_not_allowed
                 else "Đã nhận diện khuôn mặt nhưng Odoo từ chối chấm công. Vui lòng liên hệ HCNS."
             ),

@@ -70,3 +70,35 @@ class EmbeddingService:
         if best_employee_id is not None and best_score >= self._threshold:
             return MatchResult(employee_id=best_employee_id, employee_name=best_employee_name, score=best_score)
         return None
+
+    def find_employee_match(self, embedding: np.ndarray, employee_id: str) -> MatchResult | None:
+        """Compare a probe only with the employee bound to the signed Odoo session.
+
+        A global nearest-neighbour lookup is unsafe when duplicate employee records
+        carry similar or identical photos: it can select another employee first and
+        only then fail the account check.  Account-bound scans must be one-to-one.
+        """
+        entry = self._cache.get(employee_id)
+        if entry is None:
+            # Recover registrations made by another service instance without making
+            # every normal scan pay an Odoo round-trip.
+            self.reload_cache()
+            entry = self._cache.get(employee_id)
+        if entry is None:
+            return None
+
+        stored, name = entry
+        score = cosine_similarity(embedding, stored)
+        if score < self._threshold:
+            return None
+        return MatchResult(employee_id=employee_id, employee_name=name, score=score)
+
+    def registered_employee(self, employee_id: str) -> MatchResult | None:
+        """Return cached identity metadata even when a probe is below threshold."""
+        entry = self._cache.get(employee_id)
+        if entry is None:
+            self.reload_cache()
+            entry = self._cache.get(employee_id)
+        if entry is None:
+            return None
+        return MatchResult(employee_id=employee_id, employee_name=entry[1], score=0.0)

@@ -112,12 +112,19 @@ class OdooService:
         except Exception as exc:
             raise OdooServiceError(f"Odoo call {model}.{method} failed: {exc}") from exc
 
-    def _resolve_odoo_employee(self, barcode: str) -> tuple[int, str]:
-        if barcode in self._barcode_cache:
+    def _resolve_odoo_employee(self, barcode: str, *, include_inactive: bool = False) -> tuple[int, str]:
+        if include_inactive and barcode in self._barcode_cache:
             return self._barcode_cache[barcode]
 
         results = self._execute(
-            "hr.employee", "search_read", [["barcode", "=", barcode]], kwargs={"fields": ["id", "name"], "limit": 1}
+            "hr.employee",
+            "search_read",
+            [["barcode", "=", barcode], ["active", "=", True]] if not include_inactive else [["barcode", "=", barcode]],
+            kwargs={
+                "fields": ["id", "name", "active"],
+                "limit": 1,
+                **({"context": {"active_test": False}} if include_inactive else {}),
+            },
         )
         if not results:
             raise OdooServiceError(
@@ -131,9 +138,13 @@ class OdooService:
         return self._resolve_odoo_employee(barcode)[0]
 
     def resolve_odoo_id(self, employee_id: str) -> int:
-        """Public wrapper so other services (e.g. EmbeddingService.unregister)
-        can resolve a barcode without reaching into a private method."""
-        return self._resolve_odoo_employee_id(employee_id)
+        """Resolve a barcode for removal, including an archived employee.
+
+        Archive-triggered cleanup must still be able to find the old record so its
+        embedding attachment can be removed. Registration and avatar reads use the
+        active-only resolver above.
+        """
+        return self._resolve_odoo_employee(employee_id, include_inactive=True)[0]
 
     def save_face(self, employee_id: str, embedding: np.ndarray, image_bytes: bytes | None = None) -> str:
         """Store the embedding (as a JSON ir.attachment) and optionally the photo
@@ -210,10 +221,14 @@ class OdooService:
         employees = self._execute(
             "hr.employee",
             "search_read",
-            [["barcode", "!=", False]],
-            kwargs={"fields": ["id", "barcode", "name", "department_id"]},
+            [["barcode", "!=", False], ["active", "=", True], ["satori_face_enrollment_state", "=", "registered"]],
+            kwargs={"fields": ["id", "barcode", "name", "department_id", "active", "satori_face_registered_barcode"]},
         )
-        id_to_employee = {emp["id"]: emp for emp in employees}
+        id_to_employee = {
+            emp["id"]: emp
+            for emp in employees
+            if emp.get("active") and emp.get("satori_face_registered_barcode") == emp.get("barcode")
+        }
         if not id_to_employee:
             return []
 
@@ -250,9 +265,18 @@ class OdooService:
         in-memory match cache.
         """
         employees = self._execute(
-            "hr.employee", "search_read", [["barcode", "!=", False]], kwargs={"fields": ["id", "barcode", "name"]}
+            "hr.employee",
+            "search_read",
+            [["barcode", "!=", False], ["active", "=", True], ["satori_face_enrollment_state", "=", "registered"]],
+            kwargs={
+                "fields": ["id", "barcode", "name", "active", "satori_face_registered_barcode"],
+            },
         )
-        id_to_employee = {emp["id"]: (emp["barcode"], emp["name"]) for emp in employees}
+        id_to_employee = {
+            emp["id"]: (emp["barcode"], emp["name"])
+            for emp in employees
+            if emp.get("active") and emp.get("satori_face_registered_barcode") == emp.get("barcode")
+        }
         if not id_to_employee:
             return {}
 
@@ -288,6 +312,7 @@ class OdooService:
         latitude: float | None = None,
         longitude: float | None = None,
         image_bytes: bytes | None = None,
+        account_token: str = "",
     ) -> AttendanceRecord:
         """Gửi một raw punch vào Odoo để ghép chung với dữ liệu ZKTeco theo ca."""
         timestamp_utc = (
@@ -303,6 +328,7 @@ class OdooService:
             latitude if latitude is not None else False,
             longitude if longitude is not None else False,
             base64.b64encode(image_bytes).decode("ascii") if image_bytes else False,
+            account_token,
         )
         attendance_id = result.get("attendance_id")
         if not attendance_id:
