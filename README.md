@@ -149,6 +149,32 @@ Response:
 { "success": true, "employee_id": "NV015", "message": "Face registered successfully" }
 ```
 
+### `POST /register/odoo-avatar` — Đăng ký từ avatar Odoo
+
+Endpoint dành cho job nền của module `satori_face_attendance`. Service tự đọc
+`hr.employee.image_1920`, kiểm tra ảnh có đúng một khuôn mặt, tạo embedding và
+cập nhật cache ngay. Vì ảnh đến từ Odoo và request được bảo vệ bằng
+`X-API-Key`, bước đăng ký này không chạy liveness; `/verify` vẫn luôn chạy
+anti-spoofing như bình thường.
+
+```bash
+curl -X POST http://localhost:8000/register/odoo-avatar \
+  -H "X-API-Key: $REGISTER_API_KEY" \
+  -F "employee_id=NV015"
+```
+
+### `POST /register/remove` — Gỡ dữ liệu khuôn mặt
+
+Module Odoo gọi endpoint này khi xóa avatar, đổi mã nhân viên hoặc ngừng hoạt
+động nhân viên. Embedding được xóa khỏi cả Odoo và cache nhận diện.
+
+```bash
+curl -X POST http://localhost:8000/register/remove \
+  -H "X-API-Key: $REGISTER_API_KEY" \
+  -F "employee_id=NV015" \
+  -F "odoo_employee_id=123"
+```
+
 ### `POST /verify` — Xác thực + chấm công
 
 `multipart/form-data`:

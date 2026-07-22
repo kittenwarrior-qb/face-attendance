@@ -50,6 +50,10 @@ class EmbeddingService:
         self._cache[employee_id] = (embedding, name)
         return name
 
+    def unregister(self, employee_id: str, odoo_employee_id: int) -> None:
+        self._odoo_service.delete_face(odoo_employee_id)
+        self._cache.pop(employee_id, None)
+
     def find_best_match(self, embedding: np.ndarray) -> MatchResult | None:
         """Compare `embedding` against every cached embedding (brute-force, fine for ~hundreds of rows)."""
         best_score = -1.0

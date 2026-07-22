@@ -179,6 +179,20 @@ class OdooService:
         else:
             self._execute("ir.attachment", "create", vals)
 
+    def delete_face(self, odoo_employee_id: int) -> None:
+        """Remove the persisted embedding for one Odoo employee, if present."""
+        attachments = self._execute(
+            "ir.attachment",
+            "search",
+            [
+                ["res_model", "=", "hr.employee"],
+                ["res_id", "=", odoo_employee_id],
+                ["name", "=", FACE_EMBEDDING_ATTACHMENT_NAME],
+            ],
+        )
+        if attachments:
+            self._execute("ir.attachment", "unlink", attachments)
+
     def load_all_faces(self) -> dict[str, tuple[np.ndarray, str]]:
         """Fetch every registered embedding (+ employee name) from Odoo in two
         batched XML-RPC calls, keyed by barcode. Used to (re)build the

@@ -1,3 +1,5 @@
+import base64
+
 import cv2
 import numpy as np
 from fastapi import UploadFile
@@ -23,3 +25,18 @@ def encode_image_to_jpeg(image: np.ndarray, quality: int = 90) -> bytes:
     if not ok:
         raise InvalidImageError("Could not encode image as JPEG")
     return buffer.tobytes()
+
+
+def decode_base64_image(value: str | bytes) -> np.ndarray:
+    """Decode an image returned by Odoo's binary field over XML-RPC."""
+    try:
+        raw = base64.b64decode(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidImageError("Odoo avatar is not valid base64 data") from exc
+    if not raw:
+        raise InvalidImageError("Odoo avatar is empty")
+
+    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise InvalidImageError("Could not decode the Odoo avatar as an image")
+    return image
