@@ -221,13 +221,13 @@ class OdooService:
         employees = self._execute(
             "hr.employee",
             "search_read",
-            [["barcode", "!=", False], ["active", "=", True], ["satori_face_enrollment_state", "=", "registered"]],
-            kwargs={"fields": ["id", "barcode", "name", "department_id", "active", "satori_face_registered_barcode"]},
+            [["barcode", "!=", False], ["active", "=", True]],
+            kwargs={"fields": ["id", "barcode", "name", "department_id", "active"]},
         )
         id_to_employee = {
             emp["id"]: emp
             for emp in employees
-            if emp.get("active") and emp.get("satori_face_registered_barcode") == emp.get("barcode")
+            if emp.get("active") and emp.get("barcode")
         }
         if not id_to_employee:
             return []
@@ -267,15 +267,15 @@ class OdooService:
         employees = self._execute(
             "hr.employee",
             "search_read",
-            [["barcode", "!=", False], ["active", "=", True], ["satori_face_enrollment_state", "=", "registered"]],
+            [["barcode", "!=", False], ["active", "=", True]],
             kwargs={
-                "fields": ["id", "barcode", "name", "active", "satori_face_registered_barcode"],
+                "fields": ["id", "barcode", "name", "active"],
             },
         )
         id_to_employee = {
             emp["id"]: (emp["barcode"], emp["name"])
             for emp in employees
-            if emp.get("active") and emp.get("satori_face_registered_barcode") == emp.get("barcode")
+            if emp.get("active") and emp.get("barcode")
         }
         if not id_to_employee:
             return {}
