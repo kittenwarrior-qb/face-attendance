@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import numpy as np
@@ -28,7 +29,7 @@ class AccountBoundVerificationTest(unittest.IsolatedAsyncioTestCase):
         self.odoo_service.create_attendance.return_value = AttendanceRecord(
             action="check_in",
             odoo_attendance_id=10,
-            timestamp=Mock(),
+            timestamp=datetime.now(timezone.utc),
         )
         self.settings = Settings(liveness_mode="off", odoo_attach_image=False)
 

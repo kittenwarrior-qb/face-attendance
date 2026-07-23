@@ -20,7 +20,7 @@ class OdooAvatarRegistrationTest(unittest.TestCase):
         odoo_service.get_employee_avatar.return_value = base64.b64encode(encoded.tobytes()).decode()
         face_service = Mock()
         embedding = np.ones(512, dtype=np.float32)
-        face_service.extract_single_face.return_value = (embedding, (20, 30, 160, 220))
+        face_service.extract_largest_face.return_value = (embedding, (20, 30, 160, 220))
         embedding_service = Mock()
         embedding_service.register.return_value = "Nhân viên Test"
 
@@ -60,13 +60,12 @@ class OdooAvatarRegistrationTest(unittest.TestCase):
         result = asyncio.run(
             remove_registered_face(
                 employee_id="NV001",
-                odoo_employee_id=123,
                 embedding_service=embedding_service,
             )
         )
 
         self.assertTrue(result["success"])
-        embedding_service.unregister.assert_called_once_with("NV001", 123)
+        embedding_service.unregister.assert_called_once_with("NV001")
 
 
 if __name__ == "__main__":

@@ -67,7 +67,7 @@ async def register_face_from_odoo_avatar(
         raise InvalidImageError("Employee has no avatar in Odoo")
 
     image = decode_base64_image(avatar)
-    embedding, _bbox = face_service.extract_single_face(image)
+    embedding, _bbox = face_service.extract_largest_face(image)
     employee_name = embedding_service.register(employee_id, embedding, None)
     logger.info("Registered Odoo avatar for employee_id=%s (%s)", employee_id, employee_name)
     return RegisterResponse(success=True, employee_id=employee_id, employee_name=employee_name)

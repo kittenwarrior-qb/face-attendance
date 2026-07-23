@@ -49,7 +49,34 @@ class FaceService:
                 f"Expected exactly 1 face, found {len(faces)}. Only one person should be in frame."
             )
 
-        face = faces[0]
+        return self._face_result(faces[0])
+
+    def extract_largest_face(self, image: np.ndarray) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+        """Return the largest detected face in a trusted master-data image.
+
+        Employee avatars sometimes contain tiny face-like artwork or posters in
+        the background.  Interactive attendance scans must still contain exactly
+        one face, but Odoo avatar enrollment can safely select the dominant face
+        because that image is uploaded by an authenticated administrator.
+        """
+        faces = self._app.get(image)
+        if not faces:
+            raise NoFaceDetectedError("No face detected in the image")
+
+        def area(face) -> float:
+            x1, y1, x2, y2 = face.bbox
+            return max(float(x2 - x1), 0.0) * max(float(y2 - y1), 0.0)
+
+        face = max(faces, key=area)
+        if len(faces) > 1:
+            logger.info(
+                "Trusted avatar contains %d detected faces; enrolling the largest face",
+                len(faces),
+            )
+        return self._face_result(face)
+
+    @staticmethod
+    def _face_result(face) -> tuple[np.ndarray, tuple[int, int, int, int]]:
         x1, y1, x2, y2 = (int(v) for v in face.bbox)
         bbox_xywh = (x1, y1, max(x2 - x1, 1), max(y2 - y1, 1))
         return face.normed_embedding.astype(np.float32), bbox_xywh
